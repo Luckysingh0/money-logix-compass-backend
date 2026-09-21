@@ -69,21 +69,14 @@ const PANIC_DESPAIR = [
 
 // ── PANIC: market crash / collapse ─────────────────────────────────────
 const PANIC_MARKET = [
-  /\bmarket('?s| is)? crash(ing|ed)?\b/i,
-  /\bcrashing\b/i,
-  /\bcollaps(e|ing)\b/i,
-  /\bmelt(ing)? ?down\b/i,
-  /\bfree ?fall\b/i,
-  /\btanking\b/i,
-  /\bplummet(ing|ed)?\b/i,
-  /\bnose ?div(e|ing)\b/i,
-  /\bbloodbath\b/i,
-  /\bcircuit (breaker|hit)\b/i,
-  /\blower circuit\b/i,
-  /\bblack (monday|swan)\b/i,
-  /\bmarket('?s| is)? (tanking|tumbling|sinking|falling apart)\b/i,
-  /\brecession\b/i,
-  /\bdepression\b/i,
+  /\b(?:market|stocks?|portfolio|investments?)(?:\s+is)?\s+(?:crashing|crash(?:ing)?|tanking|plummeting|melting down|falling apart)\b/i,
+  /\b(?:market|stocks?|portfolio|investments?)\s+(?:collapse|collapsing|bloodbath)\b/i,
+  /\b(?:i'?m|we'?re|it'?s)\s+(?:down|losing|bleeding)\s+(?:50|60|70|80|90|100)%\b/i,
+  /\b(?:market|index|portfolio)\s+(?:free[- ]?fall|nosedive|panic)\b/i,
+  /\b(?:sell|exit|get out|dump)\s+(?:everything|all|my holdings?|my shares?)\b/i,
+  /\b(?:i'?m|we'?re)\s+on\s+the\s+brink\b/i,
+  /\b(?:stock|market|portfolio)\s+is\s+(?:crashing|collapsing|melting down|tanking)\b/i,
+  /\b(?:economic|market)\s+(?:recession|depression)\b/i,
 ];
 
 // ── PANIC: physical / sleep / overwhelm ────────────────────────────────
@@ -129,7 +122,7 @@ const FOMO_PATTERNS = [
   /\bto the moon\b/i,
   /\bmoon(ing|shot)\b/i,
   /\bnext (bitcoin|tesla|10x|100x|multibagger)\b/i,
-  /\b(10x|100x|10 ?x|hundred ?x)\b/i,
+  /\b(?:10x|100x|10 ?x|hundred ?x)\b/i,
   /\bmultibagger\b/i,
   /\bget rich (quick|fast)\b/i,
   /\beveryone(’|'| i)?s? (is )?buying\b/i,
@@ -138,10 +131,11 @@ const FOMO_PATTERNS = [
   /\btriple my money\b/i,
   /\bquick (money|buck|profit|gains?)\b/i,
   /\bhot (tip|stock|pick)\b/i,
-  /\bpump(ing)?\b/i,
-  /\brocket\b/i,
+  /\b(?:stock|market|coin|sector|index).*?(?:pumps?|pump(?:ing)?)\b/i,
+  /\b(?:stock|market|coin|sector|index).*?(?:rocket(?:s|ed)?|rocketing)\b/i,
+  /\b(?:i want to|let'?s|should i|can i|we should).*\b(?:buy the dip|buy the dip now)\b/i,
+  /\b(?:i|we)\s+(?:must|need to|should|can)\s+buy\s+(?:now|today|immediately)\b/i,
   /\bcan'?t lose\b/i,
-  /\bbuy the dip\b/i,
 ];
 
 /**

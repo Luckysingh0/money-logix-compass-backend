@@ -1,6 +1,7 @@
-// Thin data-access layer. Uses Mongoose models when MongoDB is connected,
-// otherwise falls back to in-memory maps so the demo never hard-fails.
+// Thin data-access layer. Uses MongoDB when connected and an in-memory store
+// otherwise so the app remains usable without a database.
 import crypto from "crypto";
+import mongoose from "mongoose";
 import { isDbConnected } from "../config/db.js";
 import { generateConversationTitle } from "../services/llmService.js";
 import ConversationLog from "../models/ConversationLog.js";
@@ -8,8 +9,24 @@ import RiskProfile from "../models/RiskProfile.js";
 import Plan from "../models/Plan.js";
 import User from "../models/User.js";
 
+const mem = {
+  conversations: new Map(),
+  profiles: new Map(),
+  plans: new Map(),
+  users: new Map(),
+};
+
+function normalizeEmail(email) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
+}
+
+function getUserId(user) {
+  if (!user) return null;
+  return user._id?.toString ? user._id.toString() : String(user._id);
+}
+
 export function generateSlug(title) {
-  const baseSlug = title
+  const baseSlug = String(title || "chat")
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -20,32 +37,30 @@ export function generateSlug(title) {
     .replace(/^-|-$/g, "");
 
   const suffix = crypto.randomBytes(2).toString("hex");
-
-  return `${baseSlug}-${suffix}`;
+  return `${baseSlug || "chat"}-${suffix}`;
 }
-
-const mem = {
-  conversations: new Map(),
-  profiles: new Map(),
-  plans: new Map(),
-  users: new Map(),
-};
 
 // ---- Users ----
 export async function getUser(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+
   if (isDbConnected()) {
     try {
-      let user = await User.findOne({ email });
-      return user;
+      return await User.findOne({ email: normalizedEmail });
     } catch (err) {
-      return console.error("Error fetching user:", err);
+      console.error("Error fetching user:", err);
+      return null;
     }
   }
+
+  return mem.users.get(normalizedEmail) || null;
 }
 
-// Upsert identity fields (name/email/googleId/picture) for a session.
-// Only overwrites fields that are actually provided and non-empty.
 export async function setUserIdentity(email, info = {}) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+
   const fields = {};
   for (const k of [
     "name",
@@ -55,92 +70,230 @@ export async function setUserIdentity(email, info = {}) {
     "occupation",
     "phone",
     "basicInfoComplete",
+    "onboardingComplete",
+    "password",
   ]) {
     if (info[k] != null && info[k] !== "") fields[k] = info[k];
   }
+
   if (isDbConnected()) {
     return User.findOneAndUpdate(
-      { email },
+      { email: normalizedEmail },
       { $set: fields },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   }
+
+  const existing = mem.users.get(normalizedEmail) || {
+    _id: crypto.randomUUID(),
+    email: normalizedEmail,
+    basicInfoComplete: false,
+    onboardingComplete: false,
+  };
+
+  const updated = {
+    ...existing,
+    ...fields,
+    email: normalizedEmail,
+    _id: existing._id || crypto.randomUUID(),
+  };
+  mem.users.set(normalizedEmail, updated);
+  return updated;
+}
+
+export async function createUser(email, password) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password) return null;
+
+  if (isDbConnected()) {
+    return User.create({
+      email: normalizedEmail,
+      password,
+      basicInfoComplete: false,
+      onboardingComplete: false,
+    });
+  }
+
+  if (mem.users.has(normalizedEmail)) return null;
+  const user = {
+    _id: crypto.randomUUID(),
+    email: normalizedEmail,
+    password,
+    name: "Friend",
+    basicInfoComplete: false,
+    onboardingComplete: false,
+  };
+  mem.users.set(normalizedEmail, user);
+  return user;
 }
 
 // ---- Conversations ----
 export async function getConversation(conversationId) {
-  if (isDbConnected()) {
-    const conversation = await ConversationLog.findOne({
-      _id: conversationId,
-    });
+  if (!conversationId) return null;
 
-    return conversation;
+  if (isDbConnected()) {
+    try {
+      if (!mongoose.isValidObjectId(conversationId)) return null;
+      return await ConversationLog.findOne({ _id: conversationId });
+    } catch (err) {
+      return null;
+    }
   }
+
+  return mem.conversations.get(String(conversationId)) || null;
+}
+
+export async function getConversationForUser(conversationId, email) {
+  const conversation = await getConversation(conversationId);
+  if (!conversation) return null;
+  if (!email) return conversation;
+
+  const user = await getUser(email);
+  if (!user) return null;
+
+  return String(conversation.userId) === getUserId(user) ? conversation : null;
+}
+
+export async function getConversationBySlugForUser(slug, email) {
+  if (!slug) return null;
+  const user = email ? await getUser(email) : null;
+  if (email && !user) return null;
+
+  if (isDbConnected()) {
+    const query = { slug };
+    if (user) query.userId = getUserId(user);
+    return ConversationLog.findOne(query);
+  }
+
+  const userId = user ? getUserId(user) : null;
+  return (
+    [...mem.conversations.values()].find(
+      (conversation) =>
+        conversation.slug === slug &&
+        (!userId || String(conversation.userId) === String(userId)),
+    ) || null
+  );
 }
 
 export async function createConversation(email, message) {
-  const user = await getUser(email);
-  if (!user) return;
+  const normalizedEmail = normalizeEmail(email);
+  const user = await getUser(normalizedEmail);
+  if (!user) return null;
 
-  const title = (await generateConversationTitle(message)) || "New Chat";
+  const title =
+    (await generateConversationTitle(message).catch(() => "New Chat")) ||
+    "New Chat";
   const slug = generateSlug(title);
 
-  const conversation = await ConversationLog.create({
-    userId: user._id,
+  if (isDbConnected()) {
+    return ConversationLog.create({
+      userId: getUserId(user),
+      slug,
+      title,
+      messages: [],
+    });
+  }
+
+  const conversation = {
+    _id: crypto.randomUUID(),
+    userId: getUserId(user),
     slug,
     title,
     messages: [],
-  });
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 
-  const messageAppendedConversation = await appendMessages(
-    conversation._id.toString(),
-    [{ role: "user", content: message }],
-  );
-
-  return messageAppendedConversation;
+  mem.conversations.set(conversation._id, conversation);
+  return conversation;
 }
 
-export async function getAllConversations() {
+export async function getAllConversations(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return [];
+
   if (isDbConnected()) {
-    const conversationLogs = await ConversationLog.find();
+    const user = await getUser(normalizedEmail);
+    if (!user) return [];
+
+    const conversationLogs = await ConversationLog.find({
+      userId: getUserId(user),
+    });
     return JSON.parse(JSON.stringify(conversationLogs));
   }
+
+  const user = mem.users.get(normalizedEmail);
+  if (!user) return [];
+
+  const userId = getUserId(user);
+  return [...mem.conversations.values()]
+    .filter((conversation) => String(conversation.userId) === String(userId))
+    .map((conversation) => ({ ...conversation }));
 }
 
 export async function appendMessages(conversationId, newMessages) {
   const conversation = await getConversation(conversationId);
+  if (!conversation) return null;
+
+  if (!Array.isArray(conversation.messages)) conversation.messages = [];
   conversation.messages.push(...newMessages);
-  if (isDbConnected()) await conversation.save();
+
+  if (isDbConnected()) {
+    await conversation.save();
+    return conversation;
+  }
+
+  mem.conversations.set(String(conversationId), conversation);
   return conversation;
 }
 
 // ---- Risk profile ----
 export async function getProfile(conversationId) {
+  if (!conversationId) return null;
+
   if (isDbConnected()) {
-    let profile = await RiskProfile.findOne({ conversationId });
-    if (!profile) {
-      profile = await RiskProfile.create({ conversationId });
-
-      const user = await getUser();
-
-      // Feed overlapping fields into the financial risk profile.
-      // const updates = {};
-      // const incomeNum = Number(income);
-      // if (!Number.isNaN(incomeNum) && incomeNum > 0) {
-      //   updates.monthlyIncome = incomeNum;
-      // }
-      // const goalClean = clean(goal);
-      // if (goalClean) updates.goals = [goalClean];
-      // if (Object.keys(updates).length)
-      //   await updateProfile(conversationId, updates);
+    try {
+      if (!mongoose.isValidObjectId(conversationId)) return null;
+      let profile = await RiskProfile.findOne({ conversationId });
+      if (!profile) {
+        profile = await RiskProfile.create({ conversationId });
+      }
+      return profile;
+    } catch (err) {
+      return null;
     }
-
-    return profile;
   }
+
+  const key = String(conversationId);
+  let profile = mem.profiles.get(key);
+  if (!profile) {
+    profile = {
+      conversationId: key,
+      goals: [],
+      horizonYears: null,
+      monthlyIncome: null,
+      monthlyInvestable: null,
+      fearTolerance: null,
+      lifeStage: null,
+      riskScore: null,
+      riskCategory: null,
+      complete: false,
+    };
+    mem.profiles.set(key, profile);
+  }
+  return profile;
+}
+
+export async function getProfileForUser(conversationId, email) {
+  const conversation = await getConversationForUser(conversationId, email);
+  if (!conversation) return null;
+  return getProfile(conversationId);
 }
 
 export async function updateProfile(conversationId, updates) {
   const profile = await getProfile(conversationId);
+  if (!profile) return null;
+
   for (const [key, value] of Object.entries(updates)) {
     if (value === null || value === undefined) continue;
     if (key === "goals" && Array.isArray(value)) {
@@ -150,7 +303,13 @@ export async function updateProfile(conversationId, updates) {
       profile[key] = value;
     }
   }
-  if (isDbConnected()) await profile.save();
+
+  if (isDbConnected()) {
+    await profile.save();
+    return profile;
+  }
+
+  mem.profiles.set(String(conversationId), profile);
   return profile;
 }
 
@@ -163,9 +322,31 @@ export async function savePlan(conversationId, planData) {
       setDefaultsOnInsert: true,
     });
   }
-  return planData;
+
+  const key = String(conversationId);
+  const saved = { ...planData, conversationId: key };
+  mem.plans.set(key, saved);
+  return saved;
 }
 
 export async function getPlan(conversationId) {
-  if (isDbConnected()) return Plan.findOne({ conversationId });
+  if (!conversationId) return null;
+
+  if (isDbConnected()) {
+    try {
+      if (!mongoose.isValidObjectId(conversationId)) return null;
+      return await Plan.findOne({ conversationId });
+    } catch (err) {
+      return null;
+    }
+  }
+
+  return mem.plans.get(String(conversationId)) || null;
+}
+
+export async function getPlanForUser(conversationId, email) {
+  if (!email) return getPlan(conversationId);
+  const conversation = await getConversationForUser(conversationId, email);
+  if (!conversation) return null;
+  return getPlan(conversationId);
 }

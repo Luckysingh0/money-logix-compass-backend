@@ -194,58 +194,91 @@ async function callGeminiNative({
 
   for (const model of modelsToTry) {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(
-        `${provider.baseURL}/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey,
+      const controller = new AbortController();
+      const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 20000);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const res = await fetch(
+          `${provider.baseURL}/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-goog-api-key": apiKey,
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
           },
-          body: JSON.stringify(payload),
-        },
-      );
+        );
 
-      if (res.ok) {
-        const json = await res.json();
-        const text =
-          json.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ??
-          "";
-        return text;
-      }
+        if (res.ok) {
+          const json = await res.json();
+          const text =
+            json.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ??
+            "";
+          return text;
+        }
 
-      const bodyText = await res.text();
-      lastErr = `HTTP ${res.status} ${bodyText.slice(0, 160)}`;
-      // 503 = overloaded → retry then next model. 429 = quota → skip to next.
-      if (res.status === 503) {
-        await new Promise((r) => setTimeout(r, 800));
-        continue;
+        const bodyText = await res.text();
+        lastErr = `HTTP ${res.status} ${bodyText.slice(0, 160)}`;
+        if (res.status === 503) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        break;
+      } catch (err) {
+        lastErr =
+          err?.name === "AbortError"
+            ? "Gemini request timed out."
+            : err?.message || "unknown error";
+        if (err?.name === "AbortError") break;
+      } finally {
+        clearTimeout(timeoutId);
       }
-      break;
     }
   }
   throw new Error(lastErr);
 }
 
 export async function generateConversationTitle(message) {
-  const result = await generateJSON({
-    systemPrompt: TITLE_GENERATION_SYSTEM_PROMPT,
-    userMessage: message,
-  });
-
-  return result.title || "New Chat";
+  try {
+    const result = await generateJSON({
+      systemPrompt: TITLE_GENERATION_SYSTEM_PROMPT,
+      userMessage: message,
+    });
+    return result?.title || "New Chat";
+  } catch (err) {
+    console.warn(
+      "Conversation title generation failed; using fallback title.",
+      err.message,
+    );
+    return "New Chat";
+  }
 }
 
 function normalize(p) {
+  const payload = p || {};
+  const confidenceValue = Number(payload.confidence);
+  const validConfidence =
+    Number.isFinite(confidenceValue) &&
+    confidenceValue >= 0 &&
+    confidenceValue <= 1
+      ? confidenceValue
+      : 0.5;
+
   return {
-    response_text: String(p.response_text || ""),
-    detected_emotion: p.detected_emotion || "neutral",
-    risk_signal: ["none", "low", "medium", "high"].includes(p.risk_signal)
-      ? p.risk_signal
+    response_text: String(payload.response_text || ""),
+    detected_emotion: payload.detected_emotion || "neutral",
+    risk_signal: ["none", "low", "medium", "high"].includes(payload.risk_signal)
+      ? payload.risk_signal
       : "none",
-    confidence: typeof p.confidence === "number" ? p.confidence : 0.5,
-    profile_updates: p.profile_updates || {},
-    onboarding_complete: Boolean(p.onboarding_complete),
+    confidence: validConfidence,
+    profile_updates:
+      payload.profile_updates && typeof payload.profile_updates === "object"
+        ? payload.profile_updates
+        : {},
+    onboarding_complete: Boolean(payload.onboarding_complete),
   };
 }
 

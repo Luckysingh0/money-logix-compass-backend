@@ -1,15 +1,75 @@
 import express from "express";
-import { getProfile, getConversation } from "../services/store.js";
+import mongoose from "mongoose";
+import {
+  getProfileForUser,
+  getConversationForUser,
+} from "../services/store.js";
 
 const router = express.Router();
 
-// GET /api/profile/:sessionId
-router.get("/:conversationId", async (req, res) => {
-  try {
-    const conversationId = req.params.conversationId;
+function getUserEmail(req) {
+  return (
+    String(req.query.email || req.headers["x-user-email"] || "")
+      .trim()
+      .toLowerCase() || null
+  );
+}
 
-    const p = await getProfile(conversationId);
-    res.json({
+function isSupportedConversationId(value) {
+  return (
+    mongoose.isValidObjectId(value) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
+// GET /api/profile/:conversationId/history -> full conversation log
+router.get("/:conversationId/history", async (req, res) => {
+  const { conversationId } = req.params;
+  const email = getUserEmail(req);
+
+  try {
+    if (!email) {
+      return res.status(401).json({ error: "User email is required." });
+    }
+
+    if (!isSupportedConversationId(conversationId)) {
+      return res.status(400).json({ error: "Invalid conversation ID." });
+    }
+
+    const convo = await getConversationForUser(conversationId, email);
+
+    if (!convo) {
+      return res.status(404).json({ error: "Conversation not found." });
+    }
+
+    return res.status(200).json({ messages: convo.messages || [] });
+  } catch (err) {
+    return res.status(500).json({ error: "Could not load history." });
+  }
+});
+
+// GET /api/profile/:conversationId
+router.get("/:conversationId", async (req, res) => {
+  const { conversationId } = req.params;
+  const email = getUserEmail(req);
+
+  try {
+    if (!email) {
+      return res.status(401).json({ error: "User email is required." });
+    }
+
+    if (!isSupportedConversationId(conversationId)) {
+      return res.status(400).json({ error: "Invalid conversation ID." });
+    }
+
+    const p = await getProfileForUser(conversationId, email);
+    if (!p) {
+      return res.status(404).json({ error: "Profile not found." });
+    }
+
+    return res.status(200).json({
       profile: {
         goals: p.goals || [],
         horizonYears: p.horizonYears ?? null,
@@ -23,19 +83,7 @@ router.get("/:conversationId", async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: "Could not load profile." });
-  }
-});
-
-// GET /api/profile/:sessionId/history -> full conversation log
-router.get("/:conversationId/history", async (req, res) => {
-  const conversationId = req.params.conversationId;
-
-  try {
-    const convo = await getConversation(conversationId);
-    res.json({ messages: convo.messages || [] });
-  } catch (err) {
-    res.status(500).json({ error: "Could not load history." });
+    return res.status(500).json({ error: "Could not load profile." });
   }
 });
 

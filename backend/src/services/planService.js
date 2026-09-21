@@ -10,7 +10,8 @@ const portfolios = JSON.parse(
 
 const DISCLAIMER =
   "This is educational guidance, not registered financial advice. Mutual fund investments " +
-  "are subject to market risks. Please read all scheme-related documents carefully.";
+  "are subject to market risks. The SIP return assumption used here is illustrative and not guaranteed. " +
+  "Please read all scheme-related documents carefully.";
 
 function pickTemplate(riskScore) {
   return (
@@ -33,7 +34,7 @@ export function buildPlan(profile) {
   const monthlySIP = Number(profile.monthlyInvestable) || 0;
   const horizon = Number(profile.horizonYears) || 10;
 
-  // Naive future-value of SIP for a milestone headline (assume ~11% p.a.).
+  // Illustrative SIP projection only: this is a planning assumption, not a forecast.
   const r = 0.11 / 12;
   const n = horizon * 12;
   const fv =
@@ -68,7 +69,7 @@ function buildMilestones(profile, horizon, sip, fv) {
       done: false,
     });
     ms.push({
-      label: "Build a 6-month emergency fund first",
+      label: "Consider a 6-month emergency fund buffer as a separate goal",
       targetAmount: (profile.monthlyIncome || sip * 3) * 6,
       targetYear: new Date().getFullYear() + 1,
       done: false,

@@ -56,8 +56,10 @@ export function isProfileComplete(profile) {
   return Boolean(
     profile &&
     profile.horizonYears != null &&
-    profile.fearTolerance != null &&
+    profile.monthlyIncome != null &&
     profile.monthlyInvestable != null &&
+    profile.fearTolerance != null &&
+    profile.lifeStage != null &&
     (profile.goals?.length || 0) > 0,
   );
 }

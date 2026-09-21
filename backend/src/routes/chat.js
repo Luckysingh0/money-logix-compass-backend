@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import { chatJSON, providerInfo } from "../services/llmService.js";
 import { resolvePanic } from "../services/emotionService.js";
 import {
@@ -13,6 +14,8 @@ import {
 } from "../prompts/systemPrompts.js";
 import {
   getConversation,
+  getConversationForUser,
+  getConversationBySlugForUser,
   createConversation,
   getAllConversations,
   appendMessages,
@@ -22,7 +25,6 @@ import {
   getPlan,
   getUser,
 } from "../services/store.js";
-import ConversationLog from "../models/ConversationLog.js";
 
 const router = express.Router();
 
@@ -41,15 +43,36 @@ router.post("/", async (req, res) => {
     }
 
     const user = await getUser(email);
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
 
-    const conversation =
-      conversationId !== ""
-        ? await getConversation(conversationId)
-        : await createConversation(email, message);
+    let conversation;
+    if (conversationId) {
+      conversation = await getConversationForUser(conversationId, email);
+      if (!conversation) {
+        return res
+          .status(404)
+          .json({ error: "Conversation not found for this user." });
+      }
+    } else {
+      conversation = await createConversation(email, message);
+      if (!conversation) {
+        return res
+          .status(404)
+          .json({ error: "Unable to create conversation." });
+      }
+    }
 
     const newConversationId = conversation._id.toString();
 
-    const profile = await getProfile(newConversationId);
+    if (!conversation.messages) {
+      conversation.messages = [];
+    }
+
+    const profile = (await getProfile(newConversationId)) || {
+      complete: false,
+    };
     const plan = await getPlan(newConversationId);
 
     const onboarding = !profile.complete && !isProfileComplete(profile);
@@ -57,8 +80,6 @@ router.post("/", async (req, res) => {
       ? ONBOARDING_SYSTEM_PROMPT
       : ADVISOR_SYSTEM_PROMPT;
 
-    // Tell the AI who it's talking to, up front, as a firm fact so it greets
-    // them by name and never asks for their name again.
     if (user?.name && user.name !== "Friend") {
       systemPrompt =
         `IMPORTANT: You are already talking with ${user.name}. ` +
@@ -66,20 +87,16 @@ router.post("/", async (req, res) => {
         `and never ask what their name is.\n\n${systemPrompt}`;
     }
 
-    // Give the AI full awareness of what the user sees on the dashboard.
     const dashboardContext = buildDashboardContext(profile, plan);
     if (dashboardContext) {
       systemPrompt = `${systemPrompt}\n\n${dashboardContext}`;
     }
 
-    // History trimmed to recent turns to keep token usage low on free models.
-    const history = conversation.messages.slice(-8).map((message) => ({
-      role: message.role,
-      content: message.content,
+    const history = conversation.messages.slice(-8).map((messageItem) => ({
+      role: messageItem.role,
+      content: messageItem.content,
     }));
 
-    // Pre-scan the deterministic safety net so we can request calm-mode styling
-    // from the LLM up front when panic language is present.
     const preScan = resolvePanic(message, {});
     const calmMode = preScan.panicMode;
 
@@ -91,15 +108,12 @@ router.post("/", async (req, res) => {
       thinkMode: Boolean(thinkMode),
     });
 
-    // Final panic resolution combines deterministic + LLM judgement.
     const panic = resolvePanic(message, llm);
 
-    // Merge any profile updates the model extracted.
     if (llm.profile_updates && Object.keys(llm.profile_updates).length) {
       await updateProfile(newConversationId, llm.profile_updates);
     }
 
-    // Re-read profile, recompute score, and possibly finalize onboarding + plan.
     let updatedProfile = await getProfile(newConversationId);
     let planJustBuilt = null;
 
@@ -125,13 +139,10 @@ router.post("/", async (req, res) => {
       if (user.save) await user.save();
     }
 
-    // Periodic check-in: every N user turns, nudge a reflective question.
     const userTurns =
-      conversation.messages.filter((message) => message.role === "user")
-        .length + 1;
+      conversation.messages.filter((item) => item.role === "user").length + 1;
     const checkIn = userTurns > 0 && userTurns % CHECKIN_EVERY === 0;
 
-    // Persist both turns with emotion metadata on the assistant message.
     await appendMessages(newConversationId, [
       { role: "user", content: message },
       {
@@ -173,24 +184,45 @@ router.post("/", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const conversations = await getAllConversations();
-    res.status(201).json({ conversations });
+    const email = String(req.query.email || req.headers["x-user-email"] || "")
+      .trim()
+      .toLowerCase();
+    if (!email) {
+      return res.status(401).json({ error: "User email is required." });
+    }
+
+    const conversations = await getAllConversations(email);
+    return res.status(200).json({ conversations });
   } catch (err) {
     console.error("Some error occurred while fetching conversations:", err);
-    res
-      .status(400)
+    return res
+      .status(500)
       .json({ error: "Some error occurred while fetching conversations." });
   }
 });
 
 router.get("/:slug", async (req, res) => {
   const slug = req.params.slug;
+  const email = String(req.query.email || req.headers["x-user-email"] || "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).json({ error: "User email is required." });
+  }
 
   try {
-    const conversation = await ConversationLog.findOne({
-      email,
-      slug,
-    });
+    if (!mongoose.isValidObjectId(slug)) {
+      const conversation = await getConversationBySlugForUser(slug, email);
+      if (!conversation) {
+        return res.status(404).json({
+          error: "This conversation was either deleted or does not exist.",
+        });
+      }
+      return res.status(200).json(conversation);
+    }
+
+    const conversation = await getConversationForUser(slug, email);
 
     if (!conversation) {
       return res.status(404).json({
@@ -198,10 +230,10 @@ router.get("/:slug", async (req, res) => {
       });
     }
 
-    res.status(201).json(conversation);
+    return res.status(200).json(conversation);
   } catch (err) {
     console.error("Some error occurred while fetching the conversation:", err);
-    res
+    return res
       .status(500)
       .json({ error: "Some error occurred while fetching the conversation." });
   }

@@ -1,5 +1,6 @@
 import express from "express";
-import { getProfile, getPlan } from "../services/store.js";
+import mongoose from "mongoose";
+import { getProfileForUser, getPlanForUser } from "../services/store.js";
 import { listTemplates, buildPlan } from "../services/planService.js";
 import {
   computeRiskScore,
@@ -9,15 +10,49 @@ import {
 
 const router = express.Router();
 
-// GET /api/plan/:sessionId  -> current plan (builds on the fly if profile ready)
+function getUserEmail(req) {
+  return (
+    String(req.query.email || req.headers["x-user-email"] || "")
+      .trim()
+      .toLowerCase() || null
+  );
+}
+
+function isSupportedConversationId(value) {
+  return (
+    mongoose.isValidObjectId(value) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
+// GET /api/plan/templates/all -> all portfolio templates (for transparency)
+router.get("/templates/all", (_req, res) => {
+  return res.status(200).json({ templates: listTemplates() });
+});
+
+// GET /api/plan/:conversationId  -> current plan (builds on the fly if profile ready)
 router.get("/:conversationId", async (req, res) => {
+  const { conversationId } = req.params;
+  const email = getUserEmail(req);
+
   try {
-    const conversationId = req.params.conversationId;
-    let plan = await getPlan(conversationId);
+    if (!email) {
+      return res.status(401).json({ error: "User email is required." });
+    }
+
+    if (!isSupportedConversationId(conversationId)) {
+      return res.status(400).json({ error: "Invalid conversation ID." });
+    }
+
+    let plan = await getPlanForUser(conversationId, email);
 
     if (!plan) {
-      const profile = await getProfile(conversationId);
-      if (isProfileComplete(profile)) {
+      const profile = email
+        ? await getProfileForUser(conversationId, email)
+        : null;
+      if (profile && isProfileComplete(profile)) {
         if (profile.riskScore == null) {
           profile.riskScore = computeRiskScore(profile);
           profile.riskCategory = categorize(profile.riskScore);
@@ -25,21 +60,18 @@ router.get("/:conversationId", async (req, res) => {
         plan = buildPlan(profile);
       }
     }
+
     if (!plan) {
       return res
         .status(404)
         .json({ error: "No plan yet — finish onboarding first." });
     }
-    res.json({ plan });
+
+    return res.status(200).json({ plan });
   } catch (err) {
     console.error("plan route error:", err);
-    res.status(500).json({ error: "Could not load plan." });
+    return res.status(500).json({ error: "Could not load plan." });
   }
-});
-
-// GET /api/plan/templates/all -> all portfolio templates (for transparency)
-router.get("/templates/all", (_req, res) => {
-  res.json({ templates: listTemplates() });
 });
 
 export default router;

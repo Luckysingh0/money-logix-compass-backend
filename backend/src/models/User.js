@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema(
     occupation: { type: String, default: null },
     phone: { type: String, default: null },
     basicInfoComplete: { type: Boolean, default: false },
+    onboardingComplete: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

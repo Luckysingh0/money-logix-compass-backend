@@ -1,8 +1,6 @@
 import express from "express";
 import bcrypt from "bcrypt";
-import { setUserIdentity, updateProfile } from "../services/store.js";
-
-import User from "../models/User.js";
+import { createUser, getUser, setUserIdentity } from "../services/store.js";
 
 const router = express.Router();
 
@@ -17,10 +15,12 @@ function serializeUser(user) {
     occupation: user?.occupation ?? null,
     phone: user?.phone ?? null,
     basicInfoComplete: Boolean(user?.basicInfoComplete),
+    onboardingComplete: Boolean(user?.onboardingComplete),
   };
 }
 
 const clean = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const isNonEmptyString = (v) => typeof v === "string" && v.trim().length > 0;
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -31,19 +31,20 @@ router.post("/login", async (req, res) => {
         .status(400)
         .json({ error: "Email and password are required." });
 
-    let user = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = await getUser(normalizedEmail);
 
     if (!user) {
-      // First time we see this email — remember them (UI lets users pick any password).
-      const hashedPassword = await bcrypt.hash(password, 10);
-      user = await User.create({
-        email,
-        password: hashedPassword,
-        basicInfoComplete: false,
-      });
-    } else if (user.password) {
-      const ok = await bcrypt.compare(password, user.password);
-      if (!ok) return res.status(401).json({ error: "Incorrect password." });
+      return res.status(401).json({ error: "Invalid email or password." });
+    }
+
+    if (!user.password) {
+      return res.status(401).json({ error: "Invalid email or password." });
+    }
+
+    const ok = await bcrypt.compare(String(password), user.password);
+    if (!ok) {
+      return res.status(401).json({ error: "Invalid email or password." });
     }
 
     return res.status(200).json({ user: serializeUser(user) });
@@ -62,15 +63,19 @@ router.post("/register", async (req, res) => {
         .status(400)
         .json({ error: "Email and password are required." });
 
-    let user = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    let user = await getUser(normalizedEmail);
 
+    if (user) {
+      return res.status(200).json({ user: serializeUser(user) });
+    }
+
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+    user = await createUser(normalizedEmail, hashedPassword);
     if (!user) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      user = await User.create({
-        email,
-        password: hashedPassword,
-        basicInfoComplete: false,
-      });
+      return res
+        .status(409)
+        .json({ error: "That email is already registered." });
     }
 
     res.status(201).json({ user: serializeUser(user) });
@@ -84,26 +89,40 @@ router.post("/basic-info", async (req, res) => {
   const { name, age, city, occupation, phone, income, goal, email } = req.body;
 
   try {
+    if (!email || !isNonEmptyString(String(email))) {
+      return res.status(400).json({ error: "Email is required." });
+    }
+
+    if (
+      !isNonEmptyString(name) ||
+      !isNonEmptyString(city) ||
+      !isNonEmptyString(occupation) ||
+      !isNonEmptyString(phone)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Name, city, occupation, and phone are required." });
+    }
+
     const ageNum = Number(age);
+    if (!Number.isFinite(ageNum) || ageNum <= 0) {
+      return res.status(400).json({ error: "A valid age is required." });
+    }
 
-    const basicInfoComplete =
-      name.trim() &&
-      !Number.isNaN(ageNum) &&
-      ageNum > 0 &&
-      city.trim() &&
-      occupation.trim() &&
-      phone.trim()
-        ? true
-        : false;
+    const basicInfoComplete = true;
 
-    const user = await setUserIdentity(email, {
+    const user = await setUserIdentity(String(email).trim().toLowerCase(), {
       name: clean(name),
-      age: !Number.isNaN(ageNum) && ageNum > 0 ? ageNum : null,
+      age: ageNum,
       city: clean(city),
       occupation: clean(occupation),
       phone: clean(phone),
       basicInfoComplete,
     });
+
+    if (!user) {
+      return res.status(400).json({ error: "Could not save your details." });
+    }
 
     res.status(201).json({ user: serializeUser(user) });
   } catch (err) {
@@ -119,14 +138,15 @@ router.post("/sync-user", async (req, res) => {
     if (!email || !name)
       return res.status(400).json({ error: "Name and Email are required." });
 
-    let user = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    let user = await getUser(normalizedEmail);
 
     if (!user) {
-      user = await User.create({
+      user = await setUserIdentity(normalizedEmail, {
         name,
-        email,
         image,
         basicInfoComplete: false,
+        onboardingComplete: false,
       });
     }
 
