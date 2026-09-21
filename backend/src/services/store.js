@@ -69,6 +69,8 @@ export async function setUserIdentity(email, info = {}) {
     "city",
     "occupation",
     "phone",
+    "monthlyIncome",
+    "goal",
     "basicInfoComplete",
     "onboardingComplete",
     "password",
@@ -186,12 +188,25 @@ export async function createConversation(email, message) {
   const slug = generateSlug(title);
 
   if (isDbConnected()) {
-    return ConversationLog.create({
+    const conversation = await ConversationLog.create({
       userId: getUserId(user),
       slug,
       title,
       messages: [],
     });
+    await RiskProfile.create({
+      conversationId: conversation._id.toString(),
+      goals: user.goal ? [user.goal] : [],
+      monthlyIncome: user.monthlyIncome ?? null,
+      lifeStage: user.age
+        ? user.age < 30
+          ? "early career"
+          : user.age < 50
+            ? "mid career"
+            : "pre-retirement"
+        : null,
+    });
+    return conversation;
   }
 
   const conversation = {
@@ -205,6 +220,24 @@ export async function createConversation(email, message) {
   };
 
   mem.conversations.set(conversation._id, conversation);
+  mem.profiles.set(conversation._id, {
+    conversationId: conversation._id,
+    goals: user.goal ? [user.goal] : [],
+    horizonYears: null,
+    monthlyIncome: user.monthlyIncome ?? null,
+    monthlyInvestable: null,
+    fearTolerance: null,
+    lifeStage: user.age
+      ? user.age < 30
+        ? "early career"
+        : user.age < 50
+          ? "mid career"
+          : "pre-retirement"
+      : null,
+    riskScore: null,
+    riskCategory: null,
+    complete: false,
+  });
   return conversation;
 }
 

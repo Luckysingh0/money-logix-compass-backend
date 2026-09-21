@@ -19,6 +19,7 @@ const planSchema = new mongoose.Schema(
     expectedReturn: { type: String, default: "" },
     monthlySIP: { type: Number, default: null },
     allocation: { type: Array, default: [] },
+    returnAssumptions: { type: Map, of: Number, default: {} },
     milestones: { type: [milestoneSchema], default: [] },
     disclaimer: { type: String, default: "" },
   },

@@ -35,8 +35,9 @@ export default function Root() {
 
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
-  function handleLogin(u) {
+  function handleLogin(u, token) {
     localStorage.setItem("nm_user", JSON.stringify(u));
+    if (token) localStorage.setItem("nm_auth_token", token);
     setUser(u);
     setView(u.basicInfoComplete ? "chat" : "basicinfo");
   }
@@ -50,6 +51,8 @@ export default function Root() {
 
   function handleLogout() {
     localStorage.removeItem("nm_user");
+    localStorage.removeItem("nm_auth_token");
+    if (user?.email) localStorage.removeItem(`nm_conversation_${user.email}`);
     setUser(null);
     setView("landing");
   }

@@ -62,7 +62,6 @@ Copy `backend/.env.example` and set values you need. Key vars:
 - `LLM_PROVIDER` — `gemini` (default)
 - `GEMINI_API_KEY` / `GEMINI_MODEL` — Gemini native REST key + model
 - `MOCK_LLM` — set `true` to force canned LLM responses (demo mode). If `GEMINI_API_KEY` is empty, mock mode turns on automatically.
-- `GOOGLE_CLIENT_ID` — optional: OAuth client ID for Google Sign-In (also set `VITE_GOOGLE_CLIENT_ID` in `frontend/.env`)
 
 ## Files of interest
 

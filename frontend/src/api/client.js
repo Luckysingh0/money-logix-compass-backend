@@ -1,59 +1,78 @@
 // Tiny fetch wrapper. Vite proxies /api -> backend:5000.
 
-export function getSessionId() {
-  let id = localStorage.getItem("nm_session");
-  if (!id) {
-    id =
-      "sess_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    localStorage.setItem("nm_session", id);
-  }
-  return id;
-}
-
-export function resetSession() {
-  localStorage.removeItem("nm_session");
-}
-
-// Adopt a server-issued session id (e.g. a stable per-Google-account id) so
-// the frontend and backend agree on which conversation/history to use.
-export function setSessionId(id) {
-  if (id) localStorage.setItem("nm_session", id);
-}
-
 async function req(path, options = {}) {
-  const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  let res;
+  try {
+    res = await fetch(`/api${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(localStorage.getItem("nm_auth_token")
+          ? { Authorization: `Bearer ${localStorage.getItem("nm_auth_token")}` }
+          : {}),
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+  } catch (error) {
+    console.error("API request failed:", path, error);
+    throw new Error("We could not reach NiveshMitra. Please try again.");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed (${res.status})`);
+    const friendly = {
+      401: "Please sign in again to continue.",
+      403: "You do not have access to that information.",
+      404: "That information is no longer available.",
+      429: "Too many requests. Please wait a moment and try again.",
+    };
+    console.error("API error:", path, res.status, body);
+    throw new Error(
+      friendly[res.status] ||
+        body.error ||
+        "Something went wrong. Please try again.",
+    );
   }
-  return res.json();
+  if (res.status === 204) return null;
+  return res.json().catch(() => ({}));
 }
 
 export const api = {
-  sendMessage: (sessionId, message, thinkMode = false) =>
+  sendMessage: ({ email, conversationId = null, message, thinkMode = false }) =>
     req("/chat", {
       method: "POST",
-      body: JSON.stringify({ sessionId, message, thinkMode }),
+      body: JSON.stringify({ email, conversationId, message, thinkMode }),
     }),
-  getPlan: (sessionId) => req(`/plan/${sessionId}`),
-  getProfile: (sessionId) => req(`/profile/${sessionId}`),
+  getHistory: (conversationId, email) =>
+    req(
+      `/profile/${encodeURIComponent(conversationId)}/history?email=${encodeURIComponent(email)}`,
+    ),
+  getPlan: (conversationId, email) =>
+    req(
+      `/plan/${encodeURIComponent(conversationId)}?email=${encodeURIComponent(email)}`,
+    ),
+  getProfile: (conversationId, email) =>
+    req(
+      `/profile/${encodeURIComponent(conversationId)}?email=${encodeURIComponent(email)}`,
+    ),
   health: () => req("/health"),
   login: (email, password) =>
     req("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  saveBasicInfo: (sessionId, info) =>
-    req("/auth/basic-info", {
+  register: (email, password) =>
+    req("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ sessionId, ...info }),
+      body: JSON.stringify({ email, password }),
     }),
-  googleLogin: (sessionId, credential) =>
+  googleLogin: (credential) =>
     req("/auth/google", {
       method: "POST",
-      body: JSON.stringify({ sessionId, credential }),
+      body: JSON.stringify({ credential }),
+    }),
+  saveBasicInfo: (email, info) =>
+    req("/auth/basic-info", {
+      method: "POST",
+      body: JSON.stringify({ email, ...info }),
     }),
 };

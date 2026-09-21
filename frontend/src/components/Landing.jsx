@@ -109,7 +109,7 @@ const STEPS = [
   {
     n: "03",
     title: "Plan",
-    text: "Get a personalized portfolio with real funds, SIP and milestones.",
+    text: "Get an educational portfolio template with SIP examples and milestones.",
   },
   {
     n: "04",
@@ -122,7 +122,7 @@ const STATS = [
   { value: "4", label: "Personalized risk profiles" },
   { value: "100%", label: "Conversational onboarding" },
   { value: "0", label: "Jargon, ever" },
-  { value: "24/7", label: "Calm-mode support" },
+  { value: "Anytime", label: "Calm-mode guidance" },
 ];
 
 // Sample SIP wealth projection (₹15k/mo @ ~11% p.a.) for the hero chart.
@@ -213,13 +213,13 @@ const TRUST = [
   },
   {
     icon: "chat",
-    title: "Injection resistant",
-    text: "Your messages never rewrite the system rules — instructions stay pinned.",
+    title: "System-guided responses",
+    text: "Responses follow pinned system guidance and are clearly framed as educational.",
   },
   {
     icon: "sliders",
     title: "Calm-mode safety net",
-    text: "A deterministic layer always catches panic phrases, no matter the model's mood.",
+    text: "A deterministic safety layer complements the model when panic language appears.",
   },
 ];
 
@@ -302,7 +302,7 @@ export default function Landing({ theme, onToggleTheme, onStart }) {
           </h2>
           <p className="hero-sub">
             NiveshMitra understands how you <em>feel</em> about money — then
-            turns your goals into a calm, personalized plan with real funds,
+            turns your goals into a calm, personalized educational plan with fund examples,
             SIPs and milestones. No jargon. No panic. Just confidence.
           </p>
           <div className="hero-actions">
@@ -342,7 +342,7 @@ export default function Landing({ theme, onToggleTheme, onStart }) {
                   <div className="pc-label">Projected in 15 yrs</div>
                   <div className="pc-value">{compact(finalValue)}</div>
                 </div>
-                <div className="pc-tag">₹15,000 / mo · ~11% p.a.</div>
+                <div className="pc-tag">Illustrative example · ₹15,000 / mo · ~11% p.a.</div>
               </div>
               <ResponsiveContainer width="100%" height={150}>
                 <AreaChart

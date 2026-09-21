@@ -7,15 +7,12 @@ import {
   categorize,
   isProfileComplete,
 } from "../services/riskService.js";
+import { authenticatedEmail, requireAuth } from "../services/authToken.js";
 
 const router = express.Router();
 
 function getUserEmail(req) {
-  return (
-    String(req.query.email || req.headers["x-user-email"] || "")
-      .trim()
-      .toLowerCase() || null
-  );
+  return authenticatedEmail(req);
 }
 
 function isSupportedConversationId(value) {
@@ -31,6 +28,8 @@ function isSupportedConversationId(value) {
 router.get("/templates/all", (_req, res) => {
   return res.status(200).json({ templates: listTemplates() });
 });
+
+router.use(requireAuth);
 
 // GET /api/plan/:conversationId  -> current plan (builds on the fly if profile ready)
 router.get("/:conversationId", async (req, res) => {

@@ -18,6 +18,8 @@ const userSchema = new mongoose.Schema(
     city: { type: String, default: null },
     occupation: { type: String, default: null },
     phone: { type: String, default: null },
+    monthlyIncome: { type: Number, default: null },
+    goal: { type: String, default: null },
     basicInfoComplete: { type: Boolean, default: false },
     onboardingComplete: { type: Boolean, default: false },
   },

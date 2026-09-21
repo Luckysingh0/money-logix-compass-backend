@@ -25,15 +25,18 @@ import {
   getPlan,
   getUser,
 } from "../services/store.js";
+import { authenticatedEmail, requireAuth } from "../services/authToken.js";
 
 const router = express.Router();
+router.use(requireAuth);
 
 // Number of user turns between simulated periodic check-ins.
 const CHECKIN_EVERY = 4;
 
 router.post("/", async (req, res) => {
   try {
-    const { email, conversationId, message, thinkMode } = req.body;
+    const { conversationId, message, thinkMode } = req.body;
+    const email = authenticatedEmail(req);
 
     if (!email || !message || typeof message !== "string") {
       return res.status(400).json({ error: "Email and message are required." });
@@ -184,9 +187,7 @@ router.post("/", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const email = String(req.query.email || req.headers["x-user-email"] || "")
-      .trim()
-      .toLowerCase();
+    const email = authenticatedEmail(req);
     if (!email) {
       return res.status(401).json({ error: "User email is required." });
     }
@@ -203,9 +204,7 @@ router.get("/", async (req, res) => {
 
 router.get("/:slug", async (req, res) => {
   const slug = req.params.slug;
-  const email = String(req.query.email || req.headers["x-user-email"] || "")
-    .trim()
-    .toLowerCase();
+  const email = authenticatedEmail(req);
 
   if (!email) {
     return res.status(401).json({ error: "User email is required." });

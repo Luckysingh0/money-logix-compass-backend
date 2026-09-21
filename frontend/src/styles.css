@@ -2065,6 +2065,35 @@ body {
 }
 
 @media (max-width: 560px) {
+  .topbar {
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .topbar-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .topbar .brand small {
+    display: none;
+  }
+  .composer {
+    gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .composer textarea {
+    min-width: 0;
+    padding-left: 13px;
+    padding-right: 13px;
+  }
+  .think-toggle {
+    padding: 0 10px;
+  }
+  .user-chip .user-avatar {
+    display: none;
+  }
   .info-grid {
     grid-template-columns: 1fr;
   }

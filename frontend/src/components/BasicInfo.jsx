@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { api, getSessionId } from "../api/client.js";
+import { api } from "../api/client.js";
 
 const GOALS = [
   "Retirement",
@@ -38,7 +38,7 @@ export default function BasicInfo({ theme, onToggleTheme, user, onDone }) {
     setBusy(true);
     setError("");
     try {
-      const res = await api.saveBasicInfo(getSessionId(), {
+      const res = await api.saveBasicInfo(user.email, {
         name: name.trim(),
         age,
         city: city.trim(),
@@ -101,6 +101,7 @@ export default function BasicInfo({ theme, onToggleTheme, user, onDone }) {
               max="100"
               value={age}
               placeholder="e.g. 28"
+              required
               onChange={(e) => setAge(e.target.value)}
             />
           </label>
@@ -111,6 +112,7 @@ export default function BasicInfo({ theme, onToggleTheme, user, onDone }) {
               type="text"
               value={city}
               placeholder="e.g. Pune"
+              required
               onChange={(e) => setCity(e.target.value)}
             />
           </label>
@@ -121,6 +123,7 @@ export default function BasicInfo({ theme, onToggleTheme, user, onDone }) {
               type="text"
               value={occupation}
               placeholder="e.g. Software engineer"
+              required
               onChange={(e) => setOccupation(e.target.value)}
             />
           </label>

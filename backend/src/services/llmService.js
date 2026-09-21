@@ -7,8 +7,27 @@ import {
 // ---- Provider config ---------------------------------------------------
 // Google Gemini via its NATIVE REST API (X-goog-api-key header).
 function resolveProvider() {
-  // The OpenAI-compatible endpoint uses Bearer auth which Ai-Studio "AQ." keys
-  // reject — the native header method works for both AQ and AIza keys.
+  const requestedProvider = String(process.env.LLM_PROVIDER || "gemini")
+    .trim()
+    .toLowerCase();
+
+  if (
+    requestedProvider === "openai" ||
+    requestedProvider === "openai-compatible"
+  ) {
+    return {
+      name: "openai",
+      mode: "openai-compatible",
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      fallbackModels: (process.env.OPENAI_FALLBACK_MODELS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+  }
+
   return {
     name: "gemini",
     mode: "gemini-native",
@@ -25,12 +44,15 @@ function resolveProvider() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    headers: {},
   };
 }
 
 const provider = resolveProvider();
-const apiKey = provider.apiKey;
+const apiKey =
+  provider.apiKey &&
+  !/^replace_with_|^your_|^paste_|^<.*>$/.test(provider.apiKey.trim())
+    ? provider.apiKey.trim()
+    : "";
 const MOCK = process.env.MOCK_LLM === "true" || !apiKey;
 const MODEL = provider.model;
 
@@ -39,7 +61,12 @@ export function isMockMode() {
 }
 
 export function providerInfo() {
-  return { provider: provider.name, model: MODEL, mock: MOCK };
+  return {
+    provider: provider.name,
+    model: MODEL,
+    mode: provider.mode,
+    mock: MOCK,
+  };
 }
 
 export function safeParseJSON(raw) {
@@ -134,6 +161,41 @@ export async function chatJSON({
       };
     }
   }
+
+  if (provider.mode === "openai-compatible") {
+    try {
+      const raw = await callOpenAICompatible({
+        system,
+        history,
+        userMessage,
+        thinkMode,
+      });
+      const parsed = safeParseJSON(raw);
+      if (parsed && parsed.response_text) {
+        return { ...normalize(parsed), _raw: raw, _mock: false };
+      }
+      return {
+        response_text:
+          raw ||
+          "Sorry, I had trouble forming a reply. Could you say that again?",
+        detected_emotion: "neutral",
+        risk_signal: "none",
+        confidence: 0.3,
+        profile_updates: {},
+        onboarding_complete: false,
+        _raw: raw,
+        _mock: false,
+      };
+    } catch (err) {
+      console.error("OpenAI call failed:", err.message);
+      return {
+        ...mockResponse(userMessage, calmMode),
+        response_text:
+          "I'm having a little trouble reaching my brain right now — but I'm still here. Want to try again?",
+        _error: err.message,
+      };
+    }
+  }
 }
 
 export async function generateJSON({ systemPrompt, userMessage }) {
@@ -141,12 +203,20 @@ export async function generateJSON({ systemPrompt, userMessage }) {
     return {};
   }
 
-  const raw = await callGeminiNative({
-    system: systemPrompt,
-    history: [],
-    userMessage,
-    thinkMode: false,
-  });
+  const raw =
+    provider.mode === "openai-compatible"
+      ? await callOpenAICompatible({
+          system: systemPrompt,
+          history: [],
+          userMessage,
+          thinkMode: false,
+        })
+      : await callGeminiNative({
+          system: systemPrompt,
+          history: [],
+          userMessage,
+          thinkMode: false,
+        });
 
   const parsed = safeParseJSON(raw);
 
@@ -155,6 +225,71 @@ export async function generateJSON({ systemPrompt, userMessage }) {
   }
 
   return parsed;
+}
+
+function openAIChatURL() {
+  const base = provider.baseURL.replace(/\/+$/, "");
+  return base.endsWith("/v1")
+    ? `${base}/chat/completions`
+    : `${base}/v1/chat/completions`;
+}
+
+async function callOpenAICompatible({
+  system,
+  history,
+  userMessage,
+  thinkMode = false,
+}) {
+  const messages = [
+    { role: "system", content: system },
+    ...history.map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content || ""),
+    })),
+    { role: "user", content: userMessage },
+  ];
+  const modelsToTry = [provider.model, ...(provider.fallbackModels || [])];
+  let lastErr = "unknown error";
+
+  for (const model of modelsToTry) {
+    const controller = new AbortController();
+    const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 30000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(openAIChatURL(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0.7,
+          max_tokens: Number(
+            process.env.OPENAI_MAX_TOKENS || (thinkMode ? 4096 : 2048),
+          ),
+        }),
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return json.choices?.[0]?.message?.content || "";
+      }
+      const bodyText = await res.text();
+      lastErr = `HTTP ${res.status} ${bodyText.slice(0, 160)}`;
+      if (![401, 429, 500, 502, 503, 504].includes(res.status)) break;
+    } catch (err) {
+      lastErr =
+        err?.name === "AbortError"
+          ? "OpenAI request timed out."
+          : err?.message || "unknown error";
+      if (err?.name === "AbortError") break;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  throw new Error(lastErr);
 }
 
 async function callGeminiNative({

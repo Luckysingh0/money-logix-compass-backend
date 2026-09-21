@@ -18,22 +18,22 @@ const COLORS = [
   "#78d9ec",
 ];
 
-// Rough long-term annual return assumptions per asset class (educational only).
-function assetAnnualReturn(asset = "") {
+// Uses assumptions supplied by the backend; the fallback preserves old plans.
+function assetAnnualReturn(asset = "", assumptions = {}) {
   const a = asset.toLowerCase();
-  if (a.includes("small")) return 0.14;
-  if (a.includes("mid")) return 0.13;
-  if (a.includes("flexi") || a.includes("multi")) return 0.12;
+  if (a.includes("small")) return assumptions.smallCap ?? 0.14;
+  if (a.includes("mid")) return assumptions.midCap ?? 0.13;
+  if (a.includes("flexi") || a.includes("multi")) return assumptions.flexiCap ?? 0.12;
   if (a.includes("international") || a.includes("us ") || a.includes("global"))
-    return 0.12;
+    return assumptions.international ?? 0.12;
   if (a.includes("large") || a.includes("index") || a.includes("equity"))
-    return 0.11;
-  if (a.includes("reit") || a.includes("real")) return 0.09;
-  if (a.includes("gold")) return 0.08;
+    return assumptions.equity ?? 0.11;
+  if (a.includes("reit") || a.includes("real")) return assumptions.realEstate ?? 0.09;
+  if (a.includes("gold")) return assumptions.gold ?? 0.08;
   if (a.includes("debt") || a.includes("bond") || a.includes("fixed"))
-    return 0.07;
-  if (a.includes("liquid") || a.includes("cash")) return 0.055;
-  return 0.1;
+    return assumptions.debt ?? 0.07;
+  if (a.includes("liquid") || a.includes("cash")) return assumptions.liquid ?? 0.055;
+  return assumptions.default ?? 0.1;
 }
 
 // Future value of a monthly SIP compounded monthly.
@@ -47,6 +47,7 @@ function sipFutureValue(monthly, annualRate, years) {
 export default function PlanDashboard({ plan, profile }) {
   const horizon = Number(profile?.horizonYears) || 10;
   const baseSIP = Number(plan?.monthlySIP) || 10000;
+  const assumptions = plan?.returnAssumptions || {};
 
   // Editable per-asset monthly amounts so the user can simulate "what if".
   const [amounts, setAmounts] = useState({});
@@ -82,12 +83,12 @@ export default function PlanDashboard({ plan, profile }) {
           s +
           sipFutureValue(
             amounts[a.asset] || 0,
-            assetAnnualReturn(a.asset),
+            assetAnnualReturn(a.asset, assumptions),
             horizon,
           ),
         0,
       ),
-    [plan?.allocation, amounts, horizon],
+    [plan?.allocation, amounts, horizon, assumptions],
   );
 
   const totalInvested = totalMonthly * horizon * 12;
@@ -169,14 +170,16 @@ export default function PlanDashboard({ plan, profile }) {
         </button>
       </div>
       <p className="sim-sub">
-        Drag a sector to see how its monthly amount could grow over {horizon}{" "}
-        years.
+        Adjust this local what-if simulation; your saved recommendation stays unchanged.
       </p>
 
       <div className="alloc-list">
         {plan.allocation.map((a, i) => {
           const amt = amounts[a.asset] || 0;
-          const rate = assetAnnualReturn(a.asset);
+          const rate = assetAnnualReturn(a.asset, assumptions);
+          const simulatedPercent = totalMonthly
+            ? Math.round((amt / totalMonthly) * 100)
+            : 0;
           const fv = sipFutureValue(amt, rate, horizon);
           const sliderMax = Math.max(
             baseSIP,
@@ -191,7 +194,9 @@ export default function PlanDashboard({ plan, profile }) {
                   style={{ background: COLORS[i % COLORS.length] }}
                 />
                 <strong>{a.asset}</strong>
-                <span className="pct">{a.percent}%</span>
+                <span className="pct" title="Recommended allocation">
+                  {simulatedPercent}% simulated · {a.percent}% recommended
+                </span>
               </div>
               <div className="examples">{a.examples.join(" · ")}</div>
 
@@ -209,6 +214,7 @@ export default function PlanDashboard({ plan, profile }) {
                     [a.asset]: Number(e.target.value),
                   }))
                 }
+                aria-label={`Simulate monthly amount for ${a.asset}`}
               />
               <div className="alloc-proj">
                 <span className="proj-amt">{inr(amt)}/mo</span>
@@ -233,12 +239,12 @@ export default function PlanDashboard({ plan, profile }) {
           <div className="sim-total-val">{compact(totalInvested)}</div>
         </div>
         <div>
-          <div className="stat-label">Projected in {horizon} yrs</div>
+          <div className="stat-label">Illustrative projection in {horizon} yrs</div>
           <div className="sim-total-val accent">{compact(totalCorpus)}</div>
         </div>
       </div>
       <p className="sim-note">
-        Estimates use assumed long-term average returns and are not guaranteed.
+        Illustrative projection only. Assumptions are not forecasts or guarantees.
       </p>
 
       <h3 className="ms-title">Milestones</h3>

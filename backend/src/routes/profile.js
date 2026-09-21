@@ -4,15 +4,13 @@ import {
   getProfileForUser,
   getConversationForUser,
 } from "../services/store.js";
+import { authenticatedEmail, requireAuth } from "../services/authToken.js";
 
 const router = express.Router();
+router.use(requireAuth);
 
 function getUserEmail(req) {
-  return (
-    String(req.query.email || req.headers["x-user-email"] || "")
-      .trim()
-      .toLowerCase() || null
-  );
+  return authenticatedEmail(req);
 }
 
 function isSupportedConversationId(value) {

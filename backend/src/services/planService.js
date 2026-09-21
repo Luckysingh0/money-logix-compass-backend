@@ -13,6 +13,19 @@ const DISCLAIMER =
   "are subject to market risks. The SIP return assumption used here is illustrative and not guaranteed. " +
   "Please read all scheme-related documents carefully.";
 
+const RETURN_ASSUMPTIONS = {
+  smallCap: 0.14,
+  midCap: 0.13,
+  flexiCap: 0.12,
+  international: 0.12,
+  equity: 0.11,
+  realEstate: 0.09,
+  gold: 0.08,
+  debt: 0.07,
+  liquid: 0.055,
+  default: 0.1,
+};
+
 function pickTemplate(riskScore) {
   return (
     portfolios.templates.find(
@@ -56,6 +69,7 @@ export function buildPlan(profile) {
     riskScore,
     riskCategory: category,
     disclaimer: DISCLAIMER,
+    returnAssumptions: RETURN_ASSUMPTIONS,
   };
 }
 

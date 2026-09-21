@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { api, getSessionId, resetSession } from "./api/client.js";
+import { api } from "./api/client.js";
 import MessageBubble from "./components/MessageBubble.jsx";
 import PlanDashboard from "./components/PlanDashboard.jsx";
 
@@ -15,7 +15,9 @@ let _msgSeq = 0;
 const nextMsgId = () => `m${++_msgSeq}`;
 
 export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
-  const [sessionId] = useState(getSessionId);
+  const [conversationId, setConversationId] = useState(
+    () => localStorage.getItem(`nm_conversation_${user?.email}`) || null,
+  );
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -73,15 +75,37 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       .health()
       .then((h) => setMock(h.mockLLM))
       .catch(() => {});
-    api
-      .getProfile(sessionId)
-      .then((r) => setProfile(r.profile))
-      .catch(() => {});
-    api
-      .getPlan(sessionId)
-      .then((r) => setPlan(r.plan))
-      .catch(() => {});
-  }, [sessionId]);
+  }, [user?.email]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!conversationId || !user?.email) return undefined;
+    Promise.all([
+      api.getHistory(conversationId, user.email),
+      api.getProfile(conversationId, user.email),
+      api.getPlan(conversationId, user.email).catch(() => null),
+    ])
+      .then(([history, profileResult, planResult]) => {
+        if (cancelled) return;
+        setMessages(
+          (history.messages || []).map((message) => ({
+            ...message,
+            id: nextMsgId(),
+          })),
+        );
+        setProfile(profileResult.profile);
+        if (planResult?.plan) setPlan(planResult.plan);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setConversationId(null);
+          localStorage.removeItem(`nm_conversation_${user.email}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, user?.email]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -98,7 +122,14 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
     setLoading(true);
     setBanner(null);
     try {
-      const res = await api.sendMessage(sessionId, text, thinkMode);
+      const res = await api.sendMessage({
+        email: user.email,
+        conversationId,
+        message: text,
+        thinkMode,
+      });
+      setConversationId(res.conversationId);
+      localStorage.setItem(`nm_conversation_${user.email}`, res.conversationId);
       setMessages((m) => [
         ...m,
         {
@@ -131,7 +162,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         });
       }
       if (res.planBuilt || res.phase === "advisor") {
-        const p = await api.getPlan(sessionId).catch(() => null);
+        const p = await api.getPlan(res.conversationId, user.email).catch(() => null);
         if (p?.plan) setPlan(p.plan);
         if (res.planBuilt) {
           setHasNewPlan(true);
@@ -156,8 +187,13 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   }
 
   function startOver() {
-    resetSession();
-    window.location.reload();
+    setConversationId(null);
+    setMessages([]);
+    setProfile(null);
+    setPlan(null);
+    setBanner(null);
+    setHasNewPlan(false);
+    localStorage.removeItem(`nm_conversation_${user.email}`);
   }
 
   const hasStarted = messages.some((m) => m.role === "user");
@@ -185,7 +221,11 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         placeholder="Tell me about your goals, or how you're feeling about the market…"
         rows={1}
       />
-      <button onClick={send} disabled={loading || !input.trim()}>
+      <button
+        onClick={send}
+        disabled={loading || !input.trim()}
+        aria-label="Send message"
+      >
         <span className="send-icon">➤</span>
       </button>
     </div>
@@ -319,6 +359,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
             title="Drag to resize · double-click to reset"
             role="separator"
             aria-orientation="vertical"
+            tabIndex={0}
           >
             <span className="resizer-grip" />
           </div>

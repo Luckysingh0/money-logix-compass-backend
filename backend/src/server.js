@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { connectDB } from "./config/db.js";
+import { connectDB, isDbConnected } from "./config/db.js";
 import { isMockMode, providerInfo } from "./services/llmService.js";
 import chatRoutes from "./routes/chat.js";
 import planRoutes from "./routes/plan.js";
@@ -49,12 +49,26 @@ app.use((req, res, next) => {
 
   recent.push(now);
   rateLimitMap.set(ip, recent);
+
+  if (rateLimitMap.size > 5000) {
+    for (const [key, timestamps] of rateLimitMap) {
+      if (
+        !timestamps.length ||
+        now - timestamps[timestamps.length - 1] >= WINDOW_MS
+      ) {
+        rateLimitMap.delete(key);
+      }
+    }
+  }
+
   return next();
 });
 
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
+    database: isDbConnected() ? "mongodb" : "memory",
+    databaseConnected: isDbConnected(),
     mockLLM: isMockMode(),
     ...providerInfo(),
     time: new Date().toISOString(),
