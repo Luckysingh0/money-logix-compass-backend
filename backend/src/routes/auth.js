@@ -26,13 +26,27 @@ router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    if (!email || !password)
+      return res
+        .status(400)
+        .json({ error: "Email and password are required." });
+
     let user = await User.findOne({ email });
-    if (!user) res.status(404).json({ error: "User not found." });
 
-    if (!bcrypt.compare(password, user.password))
-      return res.status(401).json({ error: "Invalid password." });
+    if (!user) {
+      // First time we see this email — remember them (UI lets users pick any password).
+      const hashedPassword = await bcrypt.hash(password, 10);
+      user = await User.create({
+        email,
+        password: hashedPassword,
+        basicInfoComplete: false,
+      });
+    } else if (user.password) {
+      const ok = await bcrypt.compare(password, user.password);
+      if (!ok) return res.status(401).json({ error: "Incorrect password." });
+    }
 
-    res.status(200).json({ user: serializeUser(user) });
+    return res.status(200).json({ user: serializeUser(user) });
   } catch (err) {
     console.error("auth/login error:", err);
     res.status(500).json({ error: "Could not sign you in." });
@@ -43,11 +57,15 @@ router.post("/register", async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    if (!email || !password)
+      return res
+        .status(400)
+        .json({ error: "Email and password are required." });
+
     let user = await User.findOne({ email });
 
     if (!user) {
       const hashedPassword = await bcrypt.hash(password, 10);
-
       user = await User.create({
         email,
         password: hashedPassword,
