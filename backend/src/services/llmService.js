@@ -1,53 +1,22 @@
 import {
   CALM_MODE_DIRECTIVE,
   DETAILED_MODE_DIRECTIVE,
+  FOMO_MODE_DIRECTIVE,
   TITLE_GENERATION_SYSTEM_PROMPT,
 } from "../prompts/systemPrompts.js";
+import Groq from "groq-sdk";
 
-// ---- Provider config ---------------------------------------------------
-// Google Gemini via its NATIVE REST API (X-goog-api-key header).
-function resolveProvider() {
-  const requestedProvider = String(process.env.LLM_PROVIDER || "gemini")
-    .trim()
-    .toLowerCase();
+const provider = {
+  name: "groq",
+  mode: "groq-chat",
+  apiKey: process.env.GROQ_API_KEY,
+  model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
+  fallbackModels: (process.env.GROQ_FALLBACK_MODELS || "llama-3.3-70b-versatile")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+};
 
-  if (
-    requestedProvider === "openai" ||
-    requestedProvider === "openai-compatible"
-  ) {
-    return {
-      name: "openai",
-      mode: "openai-compatible",
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      fallbackModels: (process.env.OPENAI_FALLBACK_MODELS || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    };
-  }
-
-  return {
-    name: "gemini",
-    mode: "gemini-native",
-    apiKey: process.env.GEMINI_API_KEY,
-    baseURL:
-      process.env.GEMINI_BASE_URL_NATIVE ||
-      "https://generativelanguage.googleapis.com/v1beta",
-    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    // Tried in order if the primary returns 503/overloaded.
-    fallbackModels: (
-      process.env.GEMINI_FALLBACK_MODELS ||
-      "gemini-flash-lite-latest,gemini-3-flash-preview"
-    )
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  };
-}
-
-const provider = resolveProvider();
 const apiKey =
   provider.apiKey &&
   !/^replace_with_|^your_|^paste_|^<.*>$/.test(provider.apiKey.trim())
@@ -55,6 +24,12 @@ const apiKey =
     : "";
 const MOCK = process.env.MOCK_LLM === "true" || !apiKey;
 const MODEL = provider.model;
+const groq = MOCK
+  ? null
+  : new Groq({
+      apiKey,
+      timeout: Number(process.env.GROQ_TIMEOUT_MS || 30000),
+    });
 
 export function isMockMode() {
   return MOCK;
@@ -72,129 +47,80 @@ export function providerInfo() {
 export function safeParseJSON(raw) {
   if (!raw || typeof raw !== "string") return null;
   let text = raw.trim();
-  // Strip code fences.
   text = text
     .replace(/^```(?:json)?/i, "")
     .replace(/```$/i, "")
     .trim();
-  // Direct parse.
   try {
     return JSON.parse(text);
   } catch (_) {
-    /* fall through */
+    // Try extracting JSON when the model adds surrounding text.
   }
-  // Grab the outermost {...} block.
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start !== -1 && end !== -1 && end > start) {
-    const candidate = text.slice(start, end + 1);
     try {
-      return JSON.parse(candidate);
+      return JSON.parse(text.slice(start, end + 1));
     } catch (_) {
-      /* give up */
+      // Return null for invalid model output.
     }
   }
   return null;
 }
 
-/**
- * Call the LLM with a system prompt + prior turns + current user message.
- * Returns parsed JSON (per system prompt contract) plus the raw text fallback.
- *
- * @param {Object}   opts
- * @param {string}   opts.systemPrompt
- * @param {Array}    opts.history          [{ role, content }]
- * @param {string}   opts.userMessage
- * @param {boolean}  opts.calmMode         append calm-mode directive
- * @param {boolean}  opts.thinkMode        enable deeper reasoning + richer reply
- */
 export async function chatJSON({
   systemPrompt,
   history = [],
   userMessage,
   calmMode = false,
+  fomoMode = false,
   thinkMode = false,
 }) {
   let system = calmMode
     ? `${systemPrompt}\n\n${CALM_MODE_DIRECTIVE}`
     : systemPrompt;
+  if (fomoMode && !calmMode) {
+    system = `${system}\n\n${FOMO_MODE_DIRECTIVE}`;
+  }
   if (thinkMode) {
     system = `${system}\n\n${DETAILED_MODE_DIRECTIVE}`;
   }
 
   if (MOCK) {
-    return mockResponse(userMessage, calmMode);
+    return mockResponse(userMessage, calmMode, fomoMode);
   }
 
-  // ---- Native Gemini REST path (X-goog-api-key header) ----
-  if (provider.mode === "gemini-native") {
-    try {
-      const raw = await callGeminiNative({
-        system,
-        history,
-        userMessage,
-        thinkMode,
-      });
-      const parsed = safeParseJSON(raw);
-      if (parsed && parsed.response_text) {
-        return { ...normalize(parsed), _raw: raw, _mock: false };
-      }
-      return {
-        response_text:
-          raw ||
-          "Sorry, I had trouble forming a reply. Could you say that again?",
-        detected_emotion: "neutral",
-        risk_signal: "none",
-        confidence: 0.3,
-        profile_updates: {},
-        onboarding_complete: false,
-        _raw: raw,
-        _mock: false,
-      };
-    } catch (err) {
-      console.error("Gemini call failed:", err.message);
-      return {
-        ...mockResponse(userMessage, calmMode),
-        response_text:
-          "I'm having a little trouble reaching my brain right now — but I'm still here. Want to try again?",
-        _error: err.message,
-      };
+  try {
+    const raw = await callGroq({
+      system,
+      history,
+      userMessage,
+      thinkMode,
+    });
+    const parsed = safeParseJSON(raw);
+    if (parsed && parsed.response_text) {
+      return { ...normalize(parsed), _raw: raw, _mock: false };
     }
-  }
-
-  if (provider.mode === "openai-compatible") {
-    try {
-      const raw = await callOpenAICompatible({
-        system,
-        history,
-        userMessage,
-        thinkMode,
-      });
-      const parsed = safeParseJSON(raw);
-      if (parsed && parsed.response_text) {
-        return { ...normalize(parsed), _raw: raw, _mock: false };
-      }
-      return {
-        response_text:
-          raw ||
-          "Sorry, I had trouble forming a reply. Could you say that again?",
-        detected_emotion: "neutral",
-        risk_signal: "none",
-        confidence: 0.3,
-        profile_updates: {},
-        onboarding_complete: false,
-        _raw: raw,
-        _mock: false,
-      };
-    } catch (err) {
-      console.error("OpenAI call failed:", err.message);
-      return {
-        ...mockResponse(userMessage, calmMode),
-        response_text:
-          "I'm having a little trouble reaching my brain right now — but I'm still here. Want to try again?",
-        _error: err.message,
-      };
-    }
+    return {
+      response_text:
+        raw ||
+        "Sorry, I had trouble forming a reply. Could you say that again?",
+      detected_emotion: "neutral",
+      risk_signal: "none",
+      confidence: 0.3,
+      profile_updates: {},
+      onboarding_complete: false,
+      _raw: raw,
+      _mock: false,
+    };
+  } catch (err) {
+    console.error("Groq call failed:", err.message);
+    return {
+      ...mockResponse(userMessage, calmMode, fomoMode),
+      response_text:
+        "I'm having a little trouble reaching my brain right now — but I'm still here. Want to try again?",
+      _error: err.message,
+    };
   }
 }
 
@@ -203,21 +129,12 @@ export async function generateJSON({ systemPrompt, userMessage }) {
     return {};
   }
 
-  const raw =
-    provider.mode === "openai-compatible"
-      ? await callOpenAICompatible({
-          system: systemPrompt,
-          history: [],
-          userMessage,
-          thinkMode: false,
-        })
-      : await callGeminiNative({
-          system: systemPrompt,
-          history: [],
-          userMessage,
-          thinkMode: false,
-        });
-
+  const raw = await callGroq({
+    system: systemPrompt,
+    history: [],
+    userMessage,
+    thinkMode: false,
+  });
   const parsed = safeParseJSON(raw);
 
   if (!parsed) {
@@ -227,14 +144,7 @@ export async function generateJSON({ systemPrompt, userMessage }) {
   return parsed;
 }
 
-function openAIChatURL() {
-  const base = provider.baseURL.replace(/\/+$/, "");
-  return base.endsWith("/v1")
-    ? `${base}/chat/completions`
-    : `${base}/v1/chat/completions`;
-}
-
-async function callOpenAICompatible({
+async function callGroq({
   system,
   history,
   userMessage,
@@ -248,129 +158,24 @@ async function callOpenAICompatible({
     })),
     { role: "user", content: userMessage },
   ];
-  const modelsToTry = [provider.model, ...(provider.fallbackModels || [])];
+  const modelsToTry = [provider.model, ...provider.fallbackModels];
   let lastErr = "unknown error";
 
   for (const model of modelsToTry) {
-    const controller = new AbortController();
-    const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 30000);
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(openAIChatURL(), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0.7,
-          max_tokens: Number(
-            process.env.OPENAI_MAX_TOKENS || (thinkMode ? 4096 : 2048),
-          ),
-        }),
-        signal: controller.signal,
+      const completion = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature: 0.7,
+        max_tokens: Number(
+          process.env.GROQ_MAX_TOKENS || (thinkMode ? 4096 : 2048),
+        ),
+        response_format: { type: "json_object" },
       });
-      if (res.ok) {
-        const json = await res.json();
-        return json.choices?.[0]?.message?.content || "";
-      }
-      const bodyText = await res.text();
-      lastErr = `HTTP ${res.status} ${bodyText.slice(0, 160)}`;
-      if (![401, 429, 500, 502, 503, 504].includes(res.status)) break;
+      return completion.choices?.[0]?.message?.content || "";
     } catch (err) {
-      lastErr =
-        err?.name === "AbortError"
-          ? "OpenAI request timed out."
-          : err?.message || "unknown error";
-      if (err?.name === "AbortError") break;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-  throw new Error(lastErr);
-}
-
-async function callGeminiNative({
-  system,
-  history,
-  userMessage,
-  thinkMode = false,
-}) {
-  const contents = [
-    ...history.map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    })),
-    { role: "user", parts: [{ text: userMessage }] },
-  ];
-
-  // thinkMode ON  -> dynamic thinking budget (-1) so the model reasons before
-  //                  replying, and a larger output cap (thinking tokens count).
-  // thinkMode OFF -> thinking disabled (0) for fast, concise JSON.
-  const maxOutputTokens = thinkMode
-    ? Number(process.env.GEMINI_THINK_MAX_TOKENS || 4096)
-    : Number(process.env.GEMINI_MAX_TOKENS || 2048);
-
-  const payload = {
-    systemInstruction: { parts: [{ text: system }] },
-    contents,
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens,
-      responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: thinkMode ? -1 : 0 },
-    },
-  };
-
-  const modelsToTry = [provider.model, ...(provider.fallbackModels || [])];
-  let lastErr = "unknown error";
-
-  for (const model of modelsToTry) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const controller = new AbortController();
-      const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 20000);
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        const res = await fetch(
-          `${provider.baseURL}/models/${model}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-goog-api-key": apiKey,
-            },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-          },
-        );
-
-        if (res.ok) {
-          const json = await res.json();
-          const text =
-            json.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ??
-            "";
-          return text;
-        }
-
-        const bodyText = await res.text();
-        lastErr = `HTTP ${res.status} ${bodyText.slice(0, 160)}`;
-        if (res.status === 503) {
-          await new Promise((r) => setTimeout(r, 800));
-          continue;
-        }
-        break;
-      } catch (err) {
-        lastErr =
-          err?.name === "AbortError"
-            ? "Gemini request timed out."
-            : err?.message || "unknown error";
-        if (err?.name === "AbortError") break;
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      lastErr = err?.message || "unknown error";
+      if (![401, 429, 500, 502, 503, 504].includes(err?.status)) break;
     }
   }
   throw new Error(lastErr);
@@ -417,27 +222,162 @@ function normalize(p) {
   };
 }
 
-function mockResponse(userMessage, calmMode) {
+function mockResponse(userMessage, calmMode, fomoMode = false) {
   if (calmMode) {
     return {
       response_text:
         "I hear you — that fear is completely valid. Take a breath. Markets dip; your plan was built for exactly these moments. Let's not act on panic. Can we look at your goals together before doing anything?",
       detected_emotion: "panic",
-      risk_signal: "high",
+      risk_signal: "medium",
       confidence: 0.9,
       profile_updates: {},
       onboarding_complete: false,
       _mock: true,
     };
   }
+
+  if (fomoMode) {
+    return {
+      response_text:
+        "That excitement makes sense, but let’s pause before chasing the move. Check how much you could genuinely afford to lose, compare it with your goal-based plan, and consider paper-testing the idea before committing real money.",
+      detected_emotion: "excited",
+      risk_signal: "medium",
+      confidence: 0.85,
+      profile_updates: {},
+      onboarding_complete: false,
+      _mock: true,
+    };
+  }
+
+  const profileUpdates = extractMockProfileUpdates(userMessage);
+  const learned = Object.keys(profileUpdates).length;
+  const responseText = learned
+    ? "Thanks — I’ve noted that. To shape this around you, what else should I know about your goals, timeline, monthly investing amount, and comfort with market ups and downs?"
+    : "(mock) Thanks for sharing that! To tailor your plan, what's your biggest financial goal right now — and roughly how many years away is it?";
+
   return {
-    response_text:
-      "(mock) Thanks for sharing that! To tailor your plan, what's your biggest financial goal right now — and roughly how many years away is it?",
+    response_text: responseText,
     detected_emotion: "neutral",
     risk_signal: "none",
     confidence: 0.6,
-    profile_updates: {},
+    profile_updates: profileUpdates,
     onboarding_complete: false,
     _mock: true,
   };
+}
+
+function extractMockProfileUpdates(text) {
+  if (typeof text !== "string" || !text.trim()) return {};
+
+  const updates = {};
+  const normalized = text.trim().toLowerCase();
+
+  const goalPatterns = [
+    ["Retirement", /\b(retire|retirement|pension)\b/],
+    ["Buy a house", /\b(buy|buying|purchase)\b.{0,30}\b(house|home|flat)\b/],
+    ["Child's education", /\b(child|children|kid|kids)\b.{0,30}\b(education|school|college)\b/],
+    ["Wealth building", /\b(build|grow|create)\b.{0,20}\b(wealth|corpus)\b/],
+    ["Emergency fund", /\b(emergency|rainy[- ]day)\b.{0,20}\b(fund|savings?)\b/],
+    ["Travel", /\b(travel|vacation|holiday|trip)\b/],
+    ["Start a business", /\b(start|launch|fund)\b.{0,25}\b(business|startup)\b/],
+  ];
+  const matchedGoal = goalPatterns.find(([, pattern]) => pattern.test(normalized));
+  if (matchedGoal) updates.goals = [matchedGoal[0]];
+
+  const horizonMatch =
+    normalized.match(
+      /\b(?:in|for|over|within|after|around|about|roughly)?\s*(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(years?|yrs?)\b/,
+    ) || normalized.match(/\b(?:long[- ]term|short[- ]term)\b/);
+  if (horizonMatch?.[0]) {
+    if (/long[- ]term/.test(horizonMatch[0])) updates.horizonYears = 10;
+    else if (/short[- ]term/.test(horizonMatch[0])) updates.horizonYears = 3;
+    else {
+      const first = Number(horizonMatch[1]);
+      const second = Number(horizonMatch[2]);
+      if (Number.isFinite(first)) {
+        updates.horizonYears = second
+          ? Math.round((first + second) / 2)
+          : Math.round(first);
+      }
+    }
+  }
+
+  const income = findMoneyAmount(
+    normalized,
+    /\b(?:monthly\s+)?(?:income|salary|earnings?)\b[^₹$0-9]{0,20}([₹$]?\s*[\d,.]+(?:\s*(?:k|lakh|lac|cr))?)/i,
+  );
+  if (income != null) updates.monthlyIncome = income;
+
+  const investable = findMoneyAmount(
+    normalized,
+    /\b(?:invest|investing|investment|save|saving|sip)\w*\b[^₹$0-9]{0,25}([₹$]?\s*[\d,.]+(?:\s*(?:k|lakh|lac|cr))?)/i,
+  );
+  if (investable != null) updates.monthlyInvestable = investable;
+
+  if (
+    /\b(panic|panicking|terrified|frightened|scared|scare|worried|anxious|nervous|can't handle|cannot handle)\b/.test(
+      normalized,
+    )
+  ) {
+    updates.fearTolerance = "low";
+  } else if (
+    /\b(not bothered|comfortable|calm|okay with|fine with|can handle|can tolerate)\b.{0,25}\b(drop|dip|loss|risk|volatil|swing|fall)\w*\b/.test(
+      normalized,
+    ) ||
+    /\b(high|very high)\b.{0,15}\b(risk tolerance|risk appetite|comfort with risk)\b/.test(
+      normalized,
+    )
+  ) {
+    updates.fearTolerance = "high";
+  } else if (
+    /\b(moderate|medium|manageable|somewhat|a little|little)\b.{0,20}\b(risk|fear|drop|dip|loss|volatil)\w*\b/.test(
+      normalized,
+    ) ||
+    /\b(risk|fear|drop|dip|loss|volatil)\w*\b.{0,20}\b(moderate|medium|manageable|somewhat|a little|little)\b/.test(
+      normalized,
+    )
+  ) {
+    updates.fearTolerance = "medium";
+  }
+
+  if (/\b(student|college|university)\b/.test(normalized)) {
+    updates.lifeStage = "student";
+  } else if (/\b(early career|young professional|first job)\b/.test(normalized)) {
+    updates.lifeStage = "early career";
+  } else if (/\b(family|married|children|kids)\b/.test(normalized)) {
+    updates.lifeStage = "family";
+  } else if (/\b(pre[- ]?retirement|near retirement)\b/.test(normalized)) {
+    updates.lifeStage = "pre-retirement";
+  } else if (/\b(retired|retirement)\b/.test(normalized)) {
+    updates.lifeStage = "retired";
+  }
+
+  return updates;
+}
+
+function findMoneyAmount(text, pattern) {
+  const match = text.match(pattern);
+  if (!match?.[1]) return null;
+
+  const matchEnd = (match.index ?? 0) + match[0].length;
+  const trailingText = text.slice(matchEnd, matchEnd + 12);
+  if (
+    !/[₹$]/.test(match[1]) &&
+    !/\b(?:k|lakh|lac|cr)\b/i.test(match[1]) &&
+    (/\b(?:year|years|yr|yrs)\b/i.test(match[0]) ||
+      /^\s*(?:year|years|yr|yrs)\b/i.test(trailingText))
+  ) {
+    return findMoneyAmount(text.slice(matchEnd), pattern);
+  }
+
+  const raw = match[1]
+    .replace(/[₹$,]/g, "")
+    .trim()
+    .toLowerCase();
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  if (/\b(?:k)\b/.test(raw)) return Math.round(value * 1_000);
+  if (/\b(?:lakh|lac)\b/.test(raw)) return Math.round(value * 100_000);
+  if (/\bcr\b/.test(raw)) return Math.round(value * 10_000_000);
+  return Math.round(value);
 }

@@ -4,8 +4,11 @@ import { OAuth2Client } from "google-auth-library";
 import { createUser, getUser, setUserIdentity } from "../services/store.js";
 import {
   authenticatedEmail,
+  AUTH_COOKIE,
+  authCookieOptions,
   createAuthToken,
   requireAuth,
+  serializeAuthCookie,
 } from "../services/authToken.js";
 
 const router = express.Router();
@@ -33,6 +36,13 @@ function serializeUser(user) {
 const clean = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
 const isNonEmptyString = (v) => typeof v === "string" && v.trim().length > 0;
 
+function setAuthCookie(res, email) {
+  res.setHeader(
+    "Set-Cookie",
+    serializeAuthCookie(createAuthToken(email), authCookieOptions()),
+  );
+}
+
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
@@ -58,9 +68,9 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
+    setAuthCookie(res, user.email);
     return res.status(200).json({
       user: serializeUser(user),
-      token: createAuthToken(user.email),
     });
   } catch (err) {
     console.error("auth/login error:", err);
@@ -94,9 +104,9 @@ router.post("/register", async (req, res) => {
         .json({ error: "That email is already registered." });
     }
 
+    setAuthCookie(res, user.email);
     res.status(201).json({
       user: serializeUser(user),
-      token: createAuthToken(user.email),
     });
   } catch (err) {
     console.error("auth/register error:", err);
@@ -134,14 +144,22 @@ router.post("/google", async (req, res) => {
       return res.status(500).json({ error: "Could not create your account." });
     }
 
+    setAuthCookie(res, user.email);
     return res.status(200).json({
       user: serializeUser(user),
-      token: createAuthToken(user.email),
     });
   } catch (err) {
     console.error("auth/google error:", err.message);
     return res.status(401).json({ error: "Could not verify Google sign-in." });
   }
+});
+
+router.post("/logout", (req, res) => {
+  res.setHeader(
+    "Set-Cookie",
+    serializeAuthCookie("", { ...authCookieOptions(), maxAge: 0 }),
+  );
+  res.status(204).end();
 });
 
 router.post("/basic-info", requireAuth, async (req, res) => {

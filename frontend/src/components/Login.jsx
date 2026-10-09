@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api/client.js";
+import Logo from "./Logo.jsx";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
@@ -53,7 +54,7 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
     setError("");
     try {
       const result = await api.googleLogin(response.credential);
-      onLogin(result.user, result.token);
+      onLogin(result.user);
     } catch (err) {
       setError(err.message || "Google sign-in failed.");
       setBusy(false);
@@ -81,7 +82,7 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
       const res = mode === "register"
         ? await api.register(mail, password)
         : await api.login(mail, password);
-      onLogin(res.user, res.token);
+      onLogin(res.user);
     } catch (err) {
       setError(err.message || "Could not sign you in.");
       setBusy(false);
@@ -101,11 +102,8 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
         {theme === "dark" ? "☀️" : "🌙"}
       </button>
 
-      <form className="auth-card" onSubmit={submit}>
-        <div className="brand auth-brand">
-          <span className="logo">🪙</span>
-          <h1>NiveshMitra</h1>
-        </div>
+      <form className="auth-card" onSubmit={submit} aria-busy={busy}>
+        <Logo size="lg" className="auth-brand" />
         <h2 className="auth-title">
           {mode === "register" ? "Create your account" : "Welcome back 👋"}
         </h2>
@@ -128,9 +126,10 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
           </>
         )}
 
-        <label className="auth-label">
+        <label className="auth-label" htmlFor="login-email">
           Email
           <input
+            id="login-email"
             type="email"
             value={email}
             autoFocus
@@ -144,9 +143,10 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
         </label>
 
         {mode === "register" && (
-          <label className="auth-label">
+          <label className="auth-label" htmlFor="login-confirm-password">
             Confirm password
             <input
+              id="login-confirm-password"
               type="password"
               value={confirmPassword}
               autoComplete="new-password"
@@ -155,9 +155,10 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
           </label>
         )}
 
-        <label className="auth-label">
+        <label className="auth-label" htmlFor="login-password">
           Password
           <input
+            id="login-password"
             type="password"
             value={password}
             placeholder="••••••••"
@@ -169,14 +170,14 @@ export default function Login({ theme, onToggleTheme, onBack, onLogin }) {
           />
         </label>
 
-        {error && <div className="auth-error">{error}</div>}
+        {error && <div className="auth-error" role="alert" aria-live="assertive">{error}</div>}
 
-        <button type="submit" className="cta-btn full" disabled={busy}>
+        <button type="submit" className="cta-btn full btn-asym" disabled={busy}>
           {busy
             ? "Please wait…"
             : mode === "register"
-              ? "Create account →"
-              : "Sign in →"}
+              ? "Create account ↗"
+              : "Sign in ↗"}
         </button>
         <button
           type="button"

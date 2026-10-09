@@ -2,13 +2,23 @@ import React from "react";
 
 export default function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
+  const emotionLabel = msg.emotion?.fomo
+    ? "FOMO check"
+    : msg.panicMode
+      ? "Panic check"
+      : null;
   return (
-    <div className={`bubble-row ${isUser ? "right" : "left"}`}>
+    <div
+      className={`bubble-row ${isUser ? "right" : "left"}`}
+      aria-label={isUser ? "Your message" : "NiveshMitra response"}
+    >
       <div
         className={`bubble ${isUser ? "user" : "ai"} ${msg.panicMode ? "calm" : ""}`}
       >
-        {!isUser && msg.panicMode && (
-          <div className="calm-badge">🫶 Calm Mode · grounding response</div>
+        {!isUser && emotionLabel && (
+          <div className={`calm-badge ${msg.emotion?.fomo ? "fomo-badge" : ""}`}>
+            {msg.emotion?.fomo ? "⚠️" : "🫶"} {emotionLabel}
+          </div>
         )}
         <div className="bubble-text">{msg.content}</div>
       </div>

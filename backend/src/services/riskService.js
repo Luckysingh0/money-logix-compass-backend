@@ -1,7 +1,9 @@
 // Rule-based risk scoring (0-100). Pure config-driven, no ML.
 // Inputs come from the progressively-built RiskProfile.
 
-const FEAR_SCORE = { low: 30, medium: 15, high: 0 }; // low fear -> can take more risk
+// fearTolerance describes comfort with volatility: low = uncomfortable with
+// losses, high = comfortable with market swings.
+const FEAR_SCORE = { low: 0, medium: 15, high: 30 };
 
 /**
  * Compute a 0-100 risk score from a profile.
@@ -18,7 +20,7 @@ export function computeRiskScore(profile) {
   else if (horizon >= 3) score += 10;
   else score += 4;
 
-  // Fear tolerance (max 30 pts) — note: low fear adds the most.
+  // Volatility comfort (max 30 pts).
   score += FEAR_SCORE[profile.fearTolerance] ?? 12;
 
   // Investable ratio: how much of income is investable (max 20 pts).

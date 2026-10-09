@@ -249,9 +249,19 @@ export async function getAllConversations(email) {
     const user = await getUser(normalizedEmail);
     if (!user) return [];
 
-    const conversationLogs = await ConversationLog.find({
-      userId: getUserId(user),
-    });
+    const conversationLogs = await ConversationLog.aggregate([
+      { $match: { userId: getUserId(user) } },
+      {
+        $project: {
+          title: 1,
+          slug: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          messageCount: { $size: "$messages" },
+        },
+      },
+      { $sort: { updatedAt: -1 } },
+    ]);
     return JSON.parse(JSON.stringify(conversationLogs));
   }
 
@@ -261,7 +271,15 @@ export async function getAllConversations(email) {
   const userId = getUserId(user);
   return [...mem.conversations.values()]
     .filter((conversation) => String(conversation.userId) === String(userId))
-    .map((conversation) => ({ ...conversation }));
+    .map((conversation) => ({
+      _id: conversation._id,
+      title: conversation.title,
+      slug: conversation.slug,
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+      messageCount: conversation.messages?.length || 0,
+    }))
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 
 export async function appendMessages(conversationId, newMessages) {
@@ -276,6 +294,15 @@ export async function appendMessages(conversationId, newMessages) {
     return conversation;
   }
 
+  mem.conversations.set(String(conversationId), conversation);
+  return conversation;
+}
+
+export async function updateConversationSummary(conversationId, summary) {
+  const conversation = await getConversation(conversationId);
+  if (!conversation) return null;
+  conversation.summary = String(summary || "").slice(0, 4000);
+  if (isDbConnected()) return conversation.save();
   mem.conversations.set(String(conversationId), conversation);
   return conversation;
 }

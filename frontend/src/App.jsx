@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api/client.js";
 import MessageBubble from "./components/MessageBubble.jsx";
 import PlanDashboard from "./components/PlanDashboard.jsx";
+import Logo from "./components/Logo.jsx";
+import LoadingAnimation from "./components/LoadingAnimation.jsx";
 
 const SUGGESTIONS = [
   "How should I start investing?",
   "Is SIP better than a fixed deposit?",
-  "The market is falling — should I sell?",
+  "The market is falling, should I sell?",
   "Help me plan for retirement",
 ];
 
@@ -18,6 +20,9 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   const [conversationId, setConversationId] = useState(
     () => localStorage.getItem(`nm_conversation_${user?.email}`) || null,
   );
+  const [conversations, setConversations] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,6 +35,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   );
   const [dashOpen, setDashOpen] = useState(false);
   const [hasNewPlan, setHasNewPlan] = useState(false);
+  const [retryText, setRetryText] = useState("");
   const [dashWidth, setDashWidth] = useState(() => {
     const saved = Number(localStorage.getItem("nm_dashw"));
     return saved >= 300 ? saved : 440;
@@ -77,6 +83,23 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       .catch(() => {});
   }, [user?.email]);
 
+  const refreshConversations = async () => {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const result = await api.getConversations();
+      setConversations(result.conversations || []);
+    } catch (error) {
+      setHistoryError(error.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshConversations();
+  }, [user?.email]);
+
   useEffect(() => {
     let cancelled = false;
     if (!conversationId || !user?.email) return undefined;
@@ -114,11 +137,13 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
     });
   }, [messages, loading]);
 
-  async function send(maybeText) {
+  async function send(maybeText, isRetry = false) {
     const text = (typeof maybeText === "string" ? maybeText : input).trim();
     if (!text || loading) return;
     setInput("");
-    setMessages((m) => [...m, { id: nextMsgId(), role: "user", content: text }]);
+    if (!isRetry) {
+      setMessages((m) => [...m, { id: nextMsgId(), role: "user", content: text }]);
+    }
     setLoading(true);
     setBanner(null);
     try {
@@ -130,6 +155,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       });
       setConversationId(res.conversationId);
       localStorage.setItem(`nm_conversation_${user.email}`, res.conversationId);
+      refreshConversations();
       setMessages((m) => [
         ...m,
         {
@@ -141,19 +167,21 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
             detected: res.emotion?.detected,
             confidence: res.emotion?.confidence,
             triggeredBy: res.emotion?.triggeredBy,
+            fomo: res.emotion?.fomo,
           },
         },
       ]);
+      setRetryText("");
       setProfile(res.profile);
       if (res.emotion?.panicMode) {
         setBanner({
           type: "calm",
-          text: "💛 We noticed you might be stressed. Take a breath — let's not make rushed money decisions.",
+          text: "💛 We noticed you might be stressed. Take a breath: let's not make rushed money decisions.",
         });
       } else if (res.emotion?.fomo) {
         setBanner({
           type: "fomo",
-          text: "⚠️ Sounds like excitement! Quick reminder: chasing hype rarely beats a steady plan.",
+          text: "⚠️ Excitement can make urgency feel like certainty. Pause, compare it with your goal-based plan, and paper-test before committing real money.",
         });
       } else if (res.checkIn) {
         setBanner({
@@ -168,11 +196,12 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
           setHasNewPlan(true);
           setBanner({
             type: "success",
-            text: "🎉 Your personalized plan is ready — tap “View plan” up top to open it!",
+            text: "🎉 Your personalized plan is ready: tap “View plan” up top to open it!",
           });
         }
       }
     } catch (err) {
+      setRetryText(text);
       setBanner({ type: "error", text: err.message });
     } finally {
       setLoading(false);
@@ -196,6 +225,17 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
     localStorage.removeItem(`nm_conversation_${user.email}`);
   }
 
+  function selectConversation(id) {
+    if (id === conversationId) return;
+    setMessages([]);
+    setProfile(null);
+    setPlan(null);
+    setBanner(null);
+    setHasNewPlan(false);
+    setConversationId(id);
+    localStorage.setItem(`nm_conversation_${user.email}`, id);
+  }
+
   const hasStarted = messages.some((m) => m.role === "user");
 
   const composer = (
@@ -206,8 +246,8 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         onClick={() => setThinkMode((v) => !v)}
         title={
           thinkMode
-            ? "Think mode ON — deeper reasoning, richer answers"
-            : "Think mode OFF — fast, concise answers"
+            ? "Think mode ON: deeper reasoning, richer answers"
+            : "Think mode OFF: fast, concise answers"
         }
         aria-pressed={thinkMode}
       >
@@ -215,6 +255,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         <span className="think-label">Think</span>
       </button>
       <textarea
+        aria-label="Message to NiveshMitra"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKey}
@@ -234,13 +275,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">
-          <span className="logo">🪙</span>
-          <div>
-            <h1>NiveshMitra</h1>
-            <small>your empathetic money companion</small>
-          </div>
-        </div>
+        <Logo showTagline />
         <div className="topbar-right">
           {mock && <span className="mock-pill">MOCK LLM</span>}
           {plan && (
@@ -289,9 +324,69 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
         }`}
         ref={layoutRef}
       >
+        <aside className="history-panel">
+          <div className="history-head">
+            <div>
+              <span className="history-eyebrow">YOUR CHATS</span>
+              <h2>Conversation history</h2>
+            </div>
+            <div className="history-head-actions">
+              <button
+                type="button"
+                className={`history-reload-btn ${historyLoading ? "spinning" : ""}`}
+                onClick={refreshConversations}
+                title="Reload conversations"
+                aria-label="Reload conversations"
+              >
+                ↻
+              </button>
+              <button className="history-new" onClick={startOver}>
+                + New
+              </button>
+            </div>
+          </div>
+          {historyLoading && (
+            <div className="history-loading-wrap">
+              <LoadingAnimation size="sm" label="Reloading chats..." />
+            </div>
+          )}
+          {!historyLoading && historyError && (
+            <p className="history-status error">{historyError}</p>
+          )}
+          {!historyLoading && !historyError && conversations.length === 0 && (
+            <p className="history-status">Your saved chats will appear here.</p>
+          )}
+          {!historyLoading && (
+            <div className="history-list">
+              {conversations.map((conversation) => (
+                <button
+                  type="button"
+                  className={`history-item ${
+                    conversation._id === conversationId ? "active" : ""
+                  }`}
+                  key={conversation._id}
+                  onClick={() => selectConversation(conversation._id)}
+                >
+                  <strong>{conversation.title || "New chat"}</strong>
+                  <span>
+                    {conversation.messageCount || 0} messages ·{" "}
+                    {formatConversationDate(conversation.updatedAt)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </aside>
         <section className={`chat-panel ${hasStarted ? "" : "empty"}`}>
           {banner && (
-            <div className={`banner ${banner.type}`}>{banner.text}</div>
+            <div className={`banner ${banner.type}`} role={banner.type === "error" ? "alert" : "status"}>
+              <span>{banner.text}</span>
+              {banner.type === "error" && retryText && (
+                <button type="button" className="banner-retry" onClick={() => send(retryText, true)} disabled={loading}>
+                  Try again
+                </button>
+              )}
+            </div>
           )}
 
           {hasStarted ? (
@@ -302,10 +397,8 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
                 ))}
                 {loading && (
                   <div className="bubble-row left">
-                    <div className="bubble ai typing">
-                      <span></span>
-                      <span></span>
-                      <span></span>
+                    <div className="bubble ai typing" role="status" aria-label="NiveshMitra is reflecting">
+                      <LoadingAnimation variant="inline" label="Reflecting..." />
                     </div>
                   </div>
                 )}
@@ -318,7 +411,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
             </>
           ) : (
             <div className="empty-hero">
-              <div className="empty-logo">🪙</div>
+              <Logo size="lg" className="empty-logo-wrap" />
               <h2 className="empty-title">
                 {user?.name && user.name !== "Friend"
                   ? `Hi ${user.name}, `
@@ -326,7 +419,7 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
                 I'm NiveshMitra
               </h2>
               <p className="empty-sub">
-                Your empathetic money companion. No jargon, no judgement — ask
+                Your empathetic money companion. No jargon, no judgement: ask
                 me anything about your money, or just tell me what's on your
                 mind.
               </p>
@@ -384,4 +477,14 @@ export default function App({ user, theme = "dark", onToggleTheme, onLogout }) {
       </main>
     </div>
   );
+}
+
+function formatConversationDate(value) {
+  if (!value) return "just now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "recently";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }

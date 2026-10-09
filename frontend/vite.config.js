@@ -6,11 +6,8 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Split heavy vendor libs into their own chunks for better caching
-        // and a smaller initial bundle.
         manualChunks: {
           react: ["react", "react-dom"],
-          charts: ["recharts"],
         },
       },
     },

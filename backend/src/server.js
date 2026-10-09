@@ -90,12 +90,17 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT || 5000;
 
 (async () => {
-  await connectDB(process.env.MONGODB_URI);
-  app.listen(PORT, () => {
-    const info = providerInfo();
-    console.log(`NiveshMitra backend on http://localhost:${PORT}`);
-    console.log(
-      `LLM: ${info.mock ? "MOCK (no key)" : `${info.provider} → ${info.model}`}`,
-    );
-  });
+  try {
+    await connectDB(process.env.MONGODB_URI);
+    app.listen(PORT, () => {
+      const info = providerInfo();
+      console.log(`NiveshMitra backend on http://localhost:${PORT}`);
+      console.log(
+        `LLM: ${info.mock ? "MOCK (no key)" : `${info.provider} → ${info.model}`}`,
+      );
+    });
+  } catch (error) {
+    console.error("Backend startup failed:", error.message);
+    process.exitCode = 1;
+  }
 })();

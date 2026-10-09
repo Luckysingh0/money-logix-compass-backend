@@ -3,6 +3,7 @@ import App from "./App.jsx";
 import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import BasicInfo from "./components/BasicInfo.jsx";
+import { api } from "./api/client.js";
 
 function readUser() {
   try {
@@ -35,9 +36,8 @@ export default function Root() {
 
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
-  function handleLogin(u, token) {
+  function handleLogin(u) {
     localStorage.setItem("nm_user", JSON.stringify(u));
-    if (token) localStorage.setItem("nm_auth_token", token);
     setUser(u);
     setView(u.basicInfoComplete ? "chat" : "basicinfo");
   }
@@ -51,7 +51,7 @@ export default function Root() {
 
   function handleLogout() {
     localStorage.removeItem("nm_user");
-    localStorage.removeItem("nm_auth_token");
+    api.logout().catch(() => {});
     if (user?.email) localStorage.removeItem(`nm_conversation_${user.email}`);
     setUser(null);
     setView("landing");

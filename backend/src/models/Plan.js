@@ -16,6 +16,8 @@ const planSchema = new mongoose.Schema(
     templateId: { type: String, required: true },
     templateName: { type: String, required: true },
     tagline: { type: String, default: "" },
+    goal: { type: String, default: "" },
+    goalPriority: { type: String, default: "" },
     expectedReturn: { type: String, default: "" },
     monthlySIP: { type: Number, default: null },
     allocation: { type: Array, default: [] },

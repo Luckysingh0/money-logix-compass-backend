@@ -174,7 +174,7 @@ export function resolvePanic(userText, llmResult) {
   const net = scanEmotionSafetyNet(userText);
   const llmPanic =
     llmResult?.detected_emotion === "panic" ||
-    llmResult?.risk_signal === "high";
+    (llmResult?.risk_signal === "high" && !net.fomo);
 
   const panicMode = net.panic || llmPanic;
   let triggeredBy = null;

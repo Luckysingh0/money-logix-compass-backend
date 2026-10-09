@@ -34,6 +34,113 @@ function pickTemplate(riskScore) {
   );
 }
 
+function normalizeGoal(profile) {
+  const goal = String(profile.goals?.[0] || "").toLowerCase();
+  if (/emergency|rainy/.test(goal)) return "emergency";
+  if (/house|home|flat/.test(goal)) return "house";
+  if (/education|school|college|child|kid/.test(goal)) return "education";
+  if (/travel|vacation|holiday|trip/.test(goal)) return "travel";
+  if (/business|startup/.test(goal)) return "business";
+  if (/retire|pension/.test(goal)) return "retirement";
+  return "wealth";
+}
+
+function goalPolicy(goal, horizon) {
+  if (goal === "emergency") {
+    return {
+      label: "Emergency fund",
+      tagline: "Protect liquidity first; this money should be available when life needs it.",
+      maxEquity: 0,
+      liquidMinimum: 70,
+      priority: "Build and preserve a liquid emergency reserve before taking equity risk.",
+    };
+  }
+
+  if (["house", "education", "travel", "business"].includes(goal)) {
+    const maxEquity = horizon <= 3 ? 20 : horizon <= 7 ? 45 : 65;
+    return {
+      label: goal[0].toUpperCase() + goal.slice(1),
+      tagline: "Match growth to the date you expect to need the money.",
+      maxEquity,
+      liquidMinimum: horizon <= 3 ? 25 : 10,
+      priority: `Protect money needed within ${horizon} years from avoidable short-term volatility.`,
+    };
+  }
+
+  return {
+    label: goal === "retirement" ? "Retirement" : "Wealth building",
+    tagline: goal === "retirement"
+      ? "Long-horizon growth with a plan to review risk as retirement approaches."
+      : "Build long-term wealth with a diversified, risk-aware allocation.",
+    maxEquity: 100,
+    liquidMinimum: 0,
+    priority: "Stay diversified and review the plan as the goal and life stage change.",
+  };
+}
+
+function buildGoalAllocation(template, policy) {
+  const allocation = template.allocation.map((item) => ({ ...item }));
+  if (policy.maxEquity >= 100 && policy.liquidMinimum === 0) return allocation;
+
+  const isEquity = (asset) =>
+    /equity|cap|thematic|international|intl|index/i.test(asset);
+  const isLiquid = (asset) => /liquid|cash/i.test(asset);
+  const isStable = (asset) => /debt|bond|fixed|liquid|cash|gold/i.test(asset);
+  let equity = allocation.reduce(
+    (sum, item) => sum + (isEquity(item.asset) ? item.percent : 0),
+    0,
+  );
+  let shifted = 0;
+
+  if (equity > policy.maxEquity) {
+    const factor = policy.maxEquity / equity;
+    allocation.forEach((item) => {
+      if (isEquity(item.asset)) {
+        const next = Math.floor(item.percent * factor);
+        shifted += item.percent - next;
+        item.percent = next;
+      }
+    });
+  }
+
+  let liquidTarget = allocation.find((item) => isLiquid(item.asset));
+  if (!liquidTarget && policy.liquidMinimum > 0) {
+    liquidTarget = {
+      asset: "Liquid / Cash",
+      percent: 0,
+      examples: ["Parag Parikh Liquid Fund"],
+    };
+    allocation.push(liquidTarget);
+  }
+
+  const total = allocation.reduce((sum, item) => sum + item.percent, 0);
+  const deficit = Math.max(0, 100 - total);
+  if (deficit > 0 && allocation.length) {
+    if (liquidTarget) {
+      const liquidNeed = Math.max(0, policy.liquidMinimum - liquidTarget.percent);
+      const toLiquid = Math.min(deficit, liquidNeed);
+      liquidTarget.percent += toLiquid;
+    }
+    const afterLiquid = allocation.reduce((sum, item) => sum + item.percent, 0);
+    const remaining = Math.max(0, 100 - afterLiquid);
+    const stableTarget =
+      allocation.find((item) => /debt|bond|fixed|liquid|cash/i.test(item.asset)) ||
+      allocation[0];
+    stableTarget.percent += remaining;
+  }
+  if (liquidTarget && liquidTarget.percent < policy.liquidMinimum) {
+    let needed = policy.liquidMinimum - liquidTarget.percent;
+    allocation.forEach((item) => {
+    if (item === liquidTarget || needed <= 0) return;
+    const transferable = Math.min(item.percent, needed);
+    item.percent -= transferable;
+    liquidTarget.percent += transferable;
+    needed -= transferable;
+    });
+  }
+  return allocation.filter((item) => item.percent > 0);
+}
+
 /**
  * Build a personalized plan object from a risk profile.
  * @param {object} profile RiskProfile-like object
@@ -46,25 +153,37 @@ export function buildPlan(profile) {
 
   const monthlySIP = Number(profile.monthlyInvestable) || 0;
   const horizon = Number(profile.horizonYears) || 10;
+  const goal = normalizeGoal(profile);
+  const policy = goalPolicy(goal, horizon);
+  const allocation = buildGoalAllocation(template, policy);
+  const annualReturn = weightedReturn(allocation);
 
   // Illustrative SIP projection only: this is a planning assumption, not a forecast.
-  const r = 0.11 / 12;
+  const r = annualReturn / 12;
   const n = horizon * 12;
   const fv =
     monthlySIP > 0
       ? monthlySIP * (((Math.pow(1 + r, n) - 1) / r) * (1 + r))
       : 0;
 
-  const milestones = buildMilestones(profile, horizon, monthlySIP, fv);
+  const milestones = buildMilestones(
+    profile,
+    horizon,
+    monthlySIP,
+    fv,
+    policy,
+  );
 
   return {
     conversationId: profile.conversationId,
     templateId: template.id,
     templateName: template.name,
-    tagline: template.tagline,
-    expectedReturn: template.expectedReturn,
+    tagline: policy.tagline,
+    goal: policy.label,
+    goalPriority: policy.priority,
+    expectedReturn: formatExpectedReturn(annualReturn),
     monthlySIP,
-    allocation: template.allocation,
+    allocation,
     milestones,
     riskScore,
     riskCategory: category,
@@ -73,7 +192,30 @@ export function buildPlan(profile) {
   };
 }
 
-function buildMilestones(profile, horizon, sip, fv) {
+function weightedReturn(allocation) {
+  const rates = RETURN_ASSUMPTIONS;
+  return allocation.reduce((sum, item) => {
+    const asset = item.asset.toLowerCase();
+    const rate =
+      asset.includes("small") ? rates.smallCap :
+      asset.includes("mid") ? rates.midCap :
+      asset.includes("flexi") ? rates.flexiCap :
+      asset.includes("international") || asset.includes("intl") ? rates.international :
+      asset.includes("equity") || asset.includes("index") || asset.includes("large") ? rates.equity :
+      asset.includes("gold") ? rates.gold :
+      asset.includes("debt") || asset.includes("bond") || asset.includes("fixed") ? rates.debt :
+      asset.includes("liquid") || asset.includes("cash") ? rates.liquid :
+      rates.default;
+    return sum + (item.percent / 100) * rate;
+  }, 0);
+}
+
+function formatExpectedReturn(rate) {
+  const percentage = rate * 100;
+  return `${Math.max(0, Math.floor(percentage - 1))}-${Math.ceil(percentage + 1)}% p.a.`;
+}
+
+function buildMilestones(profile, horizon, sip, fv, policy) {
   const ms = [];
   if (sip > 0) {
     ms.push({
@@ -82,21 +224,31 @@ function buildMilestones(profile, horizon, sip, fv) {
       targetYear: new Date().getFullYear(),
       done: false,
     });
+    if (policy.label !== "Emergency fund") {
+      ms.push({
+        label: "Build a 6-month emergency fund before increasing risk",
+        targetAmount: (profile.monthlyIncome || sip * 3) * 6,
+        targetYear: new Date().getFullYear() + 1,
+        done: false,
+      });
+    }
+  }
+  const mid = Math.max(1, Math.round(horizon / 2));
+  ms.push({
+    label: `${policy.label} review at year ${mid} — rebalance for the goal date`,
+    targetYear: new Date().getFullYear() + mid,
+    done: false,
+  });
+  if (policy.label === "Emergency fund") {
     ms.push({
-      label: "Consider a 6-month emergency fund buffer as a separate goal",
+      label: "Reach the emergency reserve target and keep it readily accessible",
       targetAmount: (profile.monthlyIncome || sip * 3) * 6,
       targetYear: new Date().getFullYear() + 1,
       done: false,
     });
   }
-  const mid = Math.max(1, Math.round(horizon / 2));
   ms.push({
-    label: `Mid-way review at year ${mid} — rebalance allocation`,
-    targetYear: new Date().getFullYear() + mid,
-    done: false,
-  });
-  ms.push({
-    label: `Goal corpus ≈ ₹${Math.round(fv).toLocaleString("en-IN")} by year ${horizon}`,
+    label: `${policy.label} corpus ≈ ₹${Math.round(fv).toLocaleString("en-IN")} by year ${horizon}`,
     targetAmount: Math.round(fv),
     targetYear: new Date().getFullYear() + horizon,
     done: false,

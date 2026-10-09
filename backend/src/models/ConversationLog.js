@@ -31,6 +31,7 @@ const conversationLogSchema = new mongoose.Schema(
     userId: { type: String, required: true, index: true },
     slug: { type: String, required: true, index: true },
     title: { type: String, default: "New Chat" },
+    summary: { type: String, default: "" },
     messages: { type: [messageSchema], default: [] },
   },
   { timestamps: true },

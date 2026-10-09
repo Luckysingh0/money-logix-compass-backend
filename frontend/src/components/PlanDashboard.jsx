@@ -1,12 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  Legend,
-} from "recharts";
 import { inr, compact } from "../utils/formatters.js";
 
 const COLORS = [
@@ -124,10 +116,12 @@ export default function PlanDashboard({ plan, profile }) {
         </span>
         <h2>{plan.templateName}</h2>
         <p className="tagline">{plan.tagline}</p>
+        {plan.goal && <p className="plan-goal">Goal: {plan.goal}</p>}
+        {plan.goalPriority && <p className="plan-goal-priority">{plan.goalPriority}</p>}
         <div className="plan-stats">
           <Stat
             label="Risk score"
-            value={plan.riskScore ?? profile?.riskScore ?? "—"}
+            value={plan.riskScore ?? profile?.riskScore ?? "--"}
           />
           <Stat label="Target return" value={plan.expectedReturn} />
           <Stat
@@ -135,32 +129,46 @@ export default function PlanDashboard({ plan, profile }) {
             value={
               plan.monthlySIP
                 ? `₹${plan.monthlySIP.toLocaleString("en-IN")}`
-                : "—"
+                : "--"
             }
           />
         </div>
       </div>
 
-      <div className="chart-wrap">
-        <ResponsiveContainer width="100%" height={240}>
-          <PieChart>
-            <Pie
-              data={pieData}
-              dataKey="value"
-              nameKey="name"
-              outerRadius={90}
-              innerRadius={45}
-              paddingAngle={2}
-              label={(d) => `${d.value}%`}
-            >
-              {pieData.map((d, i) => (
-                <Cell key={d.name} fill={COLORS[i % COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip />
-            <Legend />
-          </PieChart>
-        </ResponsiveContainer>
+      <div className="allocation-chart" aria-label="Recommended allocation">
+        <div
+          className="allocation-pie"
+          style={{
+            background: `conic-gradient(${pieData
+              .map((item, index) => {
+                const start = pieData
+                  .slice(0, index)
+                  .reduce((total, entry) => total + entry.value, 0);
+                return `${COLORS[index % COLORS.length]} ${start}% ${
+                  start + item.value
+                }%`;
+              })
+              .join(", ")})`,
+          }}
+          role="img"
+          aria-label={pieData
+            .map((item) => `${item.name}: ${item.value}%`)
+            .join(", ")}
+        >
+          <div className="allocation-pie-hole" />
+        </div>
+        <ul className="allocation-legend">
+          {pieData.map((item, index) => (
+            <li key={item.name}>
+              <span
+                className="legend-dot"
+                style={{ background: COLORS[index % COLORS.length] }}
+              />
+              <span>{item.name}</span>
+              <strong>{item.value}%</strong>
+            </li>
+          ))}
+        </ul>
       </div>
 
       <div className="sim-head">
@@ -286,7 +294,7 @@ function ProfileProgress({ profile }) {
       "Investable / mo",
       profile.monthlyInvestable ? `₹${profile.monthlyInvestable}` : null,
     ],
-    ["Fear tolerance", profile.fearTolerance],
+    ["Volatility comfort", profile.fearTolerance],
   ];
   const done = items.filter(([, v]) => v).length;
   return (

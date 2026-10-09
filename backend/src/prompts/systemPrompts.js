@@ -10,7 +10,7 @@ Your job in this phase is EMPATHETIC ONBOARDING. Across a short conversation, ge
 - their investment horizon in years
 - their approximate monthly income (INR)
 - roughly how much they can invest per month (INR)
-- their fear tolerance / reaction to market drops (low / medium / high)
+- their comfort with market volatility (low = drops feel uncomfortable, medium = manageable, high = comfortable with large swings)
 - their life stage (student, early-career, family, pre-retirement, etc.)
 
 These six things are NOT a rigid form to interrogate — they're things to discover naturally as
@@ -140,6 +140,13 @@ export const CALM_MODE_DIRECTIVE = `IMPORTANT — CALM MODE: The user appears em
 Then calmly remind them that reacting to short-term market noise usually hurts long-term returns,
 and that their plan was built for exactly these moments. Do NOT recommend selling everything.
 Suggest pausing before acting. Keep it short, human, and reassuring.`;
+
+export const FOMO_MODE_DIRECTIVE = `IMPORTANT — FOMO MODE: The user may be reacting to hype, urgency, or fear of missing out.
+  Do not amplify the excitement or present speculative returns as certain. Acknowledge the opportunity
+without endorsing an impulsive trade, then encourage a cooling-off pause. Explain that an amount they
+can genuinely afford to lose, position sizing, diversification, and a written thesis matter more than
+being first. If they want to explore the idea, suggest comparing it with their existing goal-based plan
+and testing it on paper before committing real money. Keep the tone curious, calm, and non-judgmental.`;
 
 // Appended when the user enables "Think" mode in the UI. Encourages the model to
 // reason more deeply and give a richer, well-structured answer (it still must

@@ -4,11 +4,9 @@ async function req(path, options = {}) {
   let res;
   try {
     res = await fetch(`/api${path}`, {
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...(localStorage.getItem("nm_auth_token")
-          ? { Authorization: `Bearer ${localStorage.getItem("nm_auth_token")}` }
-          : {}),
         ...(options.headers || {}),
       },
       ...options,
@@ -42,6 +40,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, conversationId, message, thinkMode }),
     }),
+  getConversations: () => req("/chat"),
   getHistory: (conversationId, email) =>
     req(
       `/profile/${encodeURIComponent(conversationId)}/history?email=${encodeURIComponent(email)}`,
@@ -70,6 +69,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ credential }),
     }),
+  logout: () => req("/auth/logout", { method: "POST" }),
   saveBasicInfo: (email, info) =>
     req("/auth/basic-info", {
       method: "POST",

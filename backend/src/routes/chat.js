@@ -21,6 +21,7 @@ import {
   appendMessages,
   getProfile,
   updateProfile,
+  updateConversationSummary,
   savePlan,
   getPlan,
   getUser,
@@ -99,15 +100,20 @@ router.post("/", async (req, res) => {
       role: messageItem.role,
       content: messageItem.content,
     }));
+    if (conversation.summary) {
+      systemPrompt = `${systemPrompt}\n\nCONVERSATION SUMMARY:\n${conversation.summary}`;
+    }
 
     const preScan = resolvePanic(message, {});
     const calmMode = preScan.panicMode;
+    const fomoMode = preScan.fomo;
 
     const llm = await chatJSON({
       systemPrompt,
       history,
       userMessage: message,
       calmMode,
+      fomoMode,
       thinkMode: Boolean(thinkMode),
     });
 
@@ -158,6 +164,10 @@ router.post("/", async (req, res) => {
         triggeredBy: panic.triggeredBy,
       },
     ]);
+    await updateConversationSummary(
+      newConversationId,
+      buildConversationSummary(updatedProfile, planJustBuilt || plan, conversation),
+    );
 
     res.status(200).json({
       conversationId: newConversationId,
@@ -274,7 +284,8 @@ function buildDashboardContext(profile, plan) {
     profileBits.push(`Monthly income: ${inr(p.monthlyIncome)}`);
   if (p.monthlyInvestable != null)
     profileBits.push(`Can invest/month: ${inr(p.monthlyInvestable)}`);
-  if (p.fearTolerance) profileBits.push(`Fear tolerance: ${p.fearTolerance}`);
+  if (p.fearTolerance)
+    profileBits.push(`Volatility comfort: ${p.fearTolerance}`);
   if (p.lifeStage) profileBits.push(`Life stage: ${p.lifeStage}`);
   if (p.riskCategory)
     profileBits.push(
@@ -284,6 +295,35 @@ function buildDashboardContext(profile, plan) {
   if (profileBits.length) {
     lines.push("USER PROFILE:");
     profileBits.forEach((b) => lines.push(`- ${b}`));
+  }
+
+  function buildConversationSummary(profile, plan, conversation) {
+    const lines = [];
+    if (profile?.goals?.length) lines.push(`Goals: ${profile.goals.join(", ")}`);
+    if (profile?.horizonYears != null)
+      lines.push(`Horizon: ${profile.horizonYears} years`);
+    if (profile?.monthlyIncome != null)
+      lines.push(`Monthly income: ${inr(profile.monthlyIncome)}`);
+    if (profile?.monthlyInvestable != null)
+      lines.push(`Monthly investable: ${inr(profile.monthlyInvestable)}`);
+    if (profile?.fearTolerance)
+      lines.push(`Volatility comfort: ${profile.fearTolerance}`);
+    if (profile?.lifeStage) lines.push(`Life stage: ${profile.lifeStage}`);
+    if (profile?.riskCategory)
+      lines.push(`Risk profile: ${profile.riskCategory} (${profile.riskScore}/100)`);
+    if (plan?.templateName) lines.push(`Plan: ${plan.templateName}`);
+    if (plan?.monthlySIP) lines.push(`Monthly SIP: ${inr(plan.monthlySIP)}`);
+    if (plan?.allocation?.length) {
+      lines.push(
+        `Allocation: ${plan.allocation.map((item) => `${item.asset} ${item.percent}%`).join(", ")}`,
+      );
+    }
+    const userMessages = (conversation.messages || [])
+      .filter((item) => item.role === "user")
+      .slice(-3)
+      .map((item) => item.content);
+    if (userMessages.length) lines.push(`Recent user concerns: ${userMessages.join(" | ")}`);
+    return lines.join("\n");
   }
 
   if (plan) {
